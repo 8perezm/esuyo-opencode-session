@@ -19,11 +19,14 @@ It aggregates the root session and all nested subagent sessions.
 - Clear labels distinguishing reported, estimated, and partially estimated costs
 - V2 model-catalog pricing with context-tier support
 
-## Requirements
+## Compatibility
 
-- OpenCode 2 beta (`opencode2`)
+| OpenCode version | Plugin version | Installation |
+| --- | --- | --- |
+| OpenCode 2 beta (`opencode2`) | `0.5.0` and later | Use the V2 instructions below. |
+| OpenCode V1 (`opencode`) | `0.4.1` | Install the pinned legacy package with the V1 instructions below. |
 
-## Install
+## OpenCode 2 Install
 
 For a local checkout, add its TUI entrypoint to `~/.config/opencode/cli.json`:
 
@@ -35,8 +38,20 @@ For a local checkout, add its TUI entrypoint to `~/.config/opencode/cli.json`:
 }
 ```
 
-The published 0.4.x package targets the legacy TUI plugin API and cannot be
+The published `0.4.x` package targets the legacy TUI plugin API and cannot be
 used with OpenCode 2.
+
+## OpenCode V1 Install
+
+OpenCode V1 users must install the final legacy release, `0.4.1`:
+
+1. Press `Ctrl+P` in OpenCode and choose **Install plugin**.
+2. Press `Tab` to install globally.
+3. Enter `opencode-plugin-session-token-summary@0.4.1`.
+
+This creates an entry in `~/.config/opencode/tui.json`. Do not install an
+unversioned package in V1 after `0.5.0` is published, because later releases
+target OpenCode 2.
 
 ## Notes
 
