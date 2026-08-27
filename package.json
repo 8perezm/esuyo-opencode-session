@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-session-token-summary",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "OpenCode TUI sidebar showing token usage across a session and its subagents.",
   "license": "MIT",
   "repository": {
@@ -40,18 +40,20 @@
     "prepublishOnly": "npm run check && npm run pack:check"
   },
   "engines": {
-    "opencode": ">=1.17.9"
+    "opencode": ">=0.0.0-beta-18387"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "^1.17.9",
+    "@opencode-ai/plugin": "0.0.0-beta-18387",
     "@opencode-ai/sdk": "^1.17.9",
-    "@opentui/solid": ">=0.3.4",
+    "@opentui/core": ">=0.5.8",
+    "@opentui/solid": ">=0.5.8",
     "solid-js": "^1.9.12"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.17.9",
+    "@opencode-ai/plugin": "0.0.0-beta-18387",
     "@opencode-ai/sdk": "^1.17.9",
-    "@opentui/solid": "^0.3.4",
+    "@opentui/core": "0.5.8",
+    "@opentui/solid": "0.5.8",
     "solid-js": "^1.9.12",
     "@types/bun": "^1.3.14",
     "typescript": "^5.8.2"

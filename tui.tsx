@@ -1,39 +1,11 @@
 /** @jsxImportSource @opentui/solid */
 
-// Token-usage sidebar. Usage is loaded via the HTTP client (session.list ->
-// subtree -> session.messages) and aggregated from assistant messages, then
-// refreshed on session lifecycle events. This client+event model is used
-// because reading the reactive `api.state.session` store did not repaint the
-// slot reliably in the host TUI.
-import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
-import type { AssistantMessage } from "@opencode-ai/sdk/v2";
-import { Show, createEffect, createSignal, onCleanup } from "solid-js";
-import { combineCosts, type CostMode } from "./usage";
+import { Plugin } from "@opencode-ai/plugin/tui";
+import { TextAttributes, type RGBA } from "@opentui/core";
+import { Show, createSignal } from "solid-js";
 
 const id = "opencode-session-tokens-sidebar";
-const SIDEBAR_ORDER = 150;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2_000;
 const REFRESH_DELAY_MS = 200;
-
-interface SessionInfo {
-  id: string;
-  parentID?: string;
-  cost?: number;
-}
-
-interface AssistantMessageInfo {
-  role: "assistant" | string;
-  modelID?: string;
-  providerID?: string;
-  cost?: number;
-  tokens?: {
-    input?: number;
-    output?: number;
-    reasoning?: number;
-    cache?: { read?: number; write?: number };
-  };
-}
 
 interface UsageState {
   status: "loading" | "ready" | "error";
@@ -43,17 +15,9 @@ interface UsageState {
   cacheRead: number;
   cacheWrite: number;
   cost: number;
-  costMode: CostMode;
+  costMode: "reported" | "estimated" | "mixed";
   turns: number;
   error?: string;
-}
-
-interface SessionSelectEvent {
-  properties?: { sessionID?: string };
-}
-
-interface TuiSlotProps {
-  session_id?: string;
 }
 
 const EMPTY: UsageState = {
@@ -79,345 +43,246 @@ function fmtCost(c: number): string {
   return "$" + c.toFixed(2);
 }
 
-function costColor(c: number, api: Parameters<TuiPlugin>[0]) {
-  if (c < 5) return api.theme.current.info;
-  if (c < 25) return api.theme.current.warning;
-  return api.theme.current.error;
+function normalizedModelID(id: string): string {
+  return (id.split("/").pop() || id).toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function buildSessionIndex(sessions: SessionInfo[]): Map<string, SessionInfo[]> {
-  const index = new Map<string, SessionInfo[]>();
-  for (const s of sessions) {
-    const pid = s.parentID || "";
-    let list = index.get(pid);
-    if (!list) {
-      list = [];
-      index.set(pid, list);
-    }
-    list.push(s);
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
   }
-  return index;
+  return "Failed to load session usage";
 }
 
-function gatherSubtree(
-  rootId: string,
-  index: Map<string, SessionInfo[]>,
-): Set<string> {
-  const subtree = new Set<string>();
-  const queue = [rootId];
-  while (queue.length) {
-    const sid = queue.shift()!;
-    if (subtree.has(sid)) continue;
-    subtree.add(sid);
-    const children = index.get(sid) || [];
-    for (const child of children) {
-      if (!subtree.has(child.id)) queue.push(child.id);
-    }
-  }
-  return subtree;
-}
+export default Plugin.define({
+  id,
+  setup(context) {
+    let disposed = false;
+    let loadID = 0;
+    let lastSessionID = "";
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let knownSessionIDs = new Set<string>();
+    const [state, setState] = createSignal<UsageState>({ ...EMPTY });
 
-function aggregate(messages: AssistantMessageInfo[]): UsageState {
-  const totals: UsageState = { ...EMPTY, status: "ready" };
-  for (const m of messages) {
-    if (m.role !== "assistant") continue;
-    totals.input += m.tokens?.input || 0;
-    totals.output += m.tokens?.output || 0;
-    totals.reasoning += m.tokens?.reasoning || 0;
-    totals.cacheRead += m.tokens?.cache?.read || 0;
-    totals.cacheWrite += m.tokens?.cache?.write || 0;
-    totals.cost += m.cost || 0;
-    totals.turns += 1;
-  }
-  return totals;
-}
+    const scheduleRefresh = () => {
+      if (disposed || !lastSessionID) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = undefined;
+        void refresh(lastSessionID);
+      }, REFRESH_DELAY_MS);
+    };
 
-const tui: TuiPlugin = async (api) => {
-  let disposed = false;
-  let loadId = 0;
-  let lastSessionId = "";
-  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-  let knownSessionIds = new Set<string>();
+    const refresh = async (sessionID: string) => {
+      if (disposed || !sessionID) return;
+      const currentLoadID = ++loadID;
 
-  const [state, setState] = createSignal<UsageState>({ ...EMPTY });
-
-  function scheduleRefresh() {
-    if (disposed || !lastSessionId) return;
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => {
-      refreshTimer = undefined;
-      load(lastSessionId);
-    }, REFRESH_DELAY_MS);
-  }
-
-  // ---------------------------------------------------------------------------
-  // load() — mirrors opencode-costs exactly (session.list + subtree + messages)
-  // ---------------------------------------------------------------------------
-  async function load(sessionId: string) {
-    if (disposed || !sessionId) return;
-    const myLoadId = ++loadId;
-
-    let lastError: string | undefined;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const dir = api.state.path.directory;
-        const sessionsRes = await api.client.session.list({ directory: dir });
-        if (disposed || myLoadId !== loadId) return;
+        await context.data.session.sync(sessionID);
+        const family = context.data.session.family(sessionID);
+        if (disposed || currentLoadID !== loadID) return;
 
-        const sessions: SessionInfo[] = sessionsRes.data || [];
-        const index = buildSessionIndex(sessions);
-        const subtree = gatherSubtree(sessionId, index);
-        knownSessionIds = subtree;
-
+        knownSessionIDs = new Set(family);
         const totals: UsageState = { ...EMPTY, status: "ready" };
-        const assistantMessages: AssistantMessage[] = [];
-        for (const sid of subtree) {
-          const msgRes = await api.client.session.messages({
-            sessionID: sid,
-            directory: dir,
-          });
-          if (disposed || myLoadId !== loadId) return;
-          const messages: AssistantMessageInfo[] = [];
-          for (const entry of msgRes.data || []) {
-            const info = entry?.info as AssistantMessageInfo | undefined;
-            if (info && info.role === "assistant") {
-              messages.push(info);
-              assistantMessages.push(info as AssistantMessage);
-            }
+        const assistantMessages = [] as Array<Awaited<ReturnType<typeof context.client.message.list>>["data"][number] & { type: "assistant" }>;
+
+        for (const id of family) {
+          let cursor: string | undefined;
+          do {
+            const page = await context.client.message.list({
+              sessionID: id,
+              limit: 100,
+              ...(cursor ? { cursor } : { order: "desc" }),
+            });
+            assistantMessages.push(...page.data.filter((message) => message.type === "assistant"));
+            cursor = page.cursor.next ?? undefined;
+          } while (cursor);
+        }
+        if (disposed || currentLoadID !== loadID) return;
+
+        for (const id of family) {
+          const session = context.data.session.get(id);
+          if (session) {
+            totals.input += session.tokens.input;
+            totals.output += session.tokens.output;
+            totals.reasoning += session.tokens.reasoning;
+            totals.cacheRead += session.tokens.cache.read;
+            totals.cacheWrite += session.tokens.cache.write;
+            totals.cost += session.cost;
           }
 
-          const sessionTotals = aggregate(messages);
-          totals.input += sessionTotals.input;
-          totals.output += sessionTotals.output;
-          totals.reasoning += sessionTotals.reasoning;
-          totals.cacheRead += sessionTotals.cacheRead;
-          totals.cacheWrite += sessionTotals.cacheWrite;
-          totals.turns += sessionTotals.turns;
-
-          // Session totals include costs even when message payloads do not.
-          const session = sessions.find((entry) => entry.id === sid);
-          totals.cost += session?.cost ?? sessionTotals.cost;
         }
 
-        if (assistantMessages.some((message) => message.cost === 0)) {
-          try {
-            const providersRes = await api.client.provider.list({ directory: dir });
-            const combined = combineCosts(
-              totals.cost,
-              assistantMessages,
-              providersRes.data?.all ?? [],
-            );
-            totals.cost = combined.cost;
-            totals.costMode = combined.mode;
-          } catch {
-            // Pricing is optional; token totals should still be displayed.
-          }
-        }
-
-        if (disposed || myLoadId !== loadId) return;
-        setState(totals);
-        return;
-      } catch (e: unknown) {
-        lastError = e instanceof Error ? e.message : String(e);
+        totals.turns = assistantMessages.length;
 
         try {
-          await api.client.app.log({
-            service: id,
-            level: "error",
-            message: `Failed to load usage (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${lastError}`,
-          });
+          await context.data.location.model.sync(context.location);
+          const models = context.data.location.model.list(context.location) ?? [];
+          const estimatedCost = assistantMessages.reduce((total, message) => {
+            if (message.cost !== 0 || !message.tokens) return total;
+            const model = models.find(
+              (candidate) =>
+                candidate.providerID === message.model.providerID &&
+                (candidate.modelID === message.model.id || candidate.id === message.model.id) &&
+                candidate.cost.length > 0,
+            ) ?? models.find(
+              (candidate) =>
+                candidate.cost.length > 0 &&
+                (normalizedModelID(candidate.modelID) === normalizedModelID(message.model.id) ||
+                  normalizedModelID(candidate.id) === normalizedModelID(message.model.id)),
+            );
+            if (!model) return total;
+
+            const contextTokens =
+              message.tokens.input + message.tokens.cache.read + message.tokens.cache.write;
+            const cost = model.cost
+              .filter((entry) => entry.tier && contextTokens > entry.tier.size)
+              .sort((a, b) => (b.tier?.size ?? 0) - (a.tier?.size ?? 0))[0] ??
+              model.cost.find((entry) => !entry.tier);
+            if (!cost) return total;
+
+            return total +
+              (message.tokens.input * cost.input +
+                (message.tokens.output + message.tokens.reasoning) * cost.output +
+                message.tokens.cache.read * cost.cache.read +
+                message.tokens.cache.write * cost.cache.write) /
+                1_000_000;
+          }, 0);
+
+          if (estimatedCost > 0) {
+            totals.cost += estimatedCost;
+            totals.costMode = totals.cost > estimatedCost ? "mixed" : "estimated";
+          }
         } catch {
-          // Logging must not interrupt retries.
+          // Pricing is optional; session totals remain available when it cannot load.
         }
 
-        if (attempt < MAX_RETRIES) {
-          await new Promise((r) =>
-            setTimeout(r, RETRY_DELAY_MS * Math.pow(2, attempt)),
-          );
-          if (disposed || myLoadId !== loadId) return;
-        }
+        setState(totals);
+      } catch (error) {
+        if (disposed || currentLoadID !== loadID) return;
+        setState({
+          ...EMPTY,
+          status: "error",
+          error: errorMessage(error),
+        });
       }
-    }
+    };
 
-    // Keep a complete snapshot visible when a background refresh fails.
-    if (state().status !== "ready") {
-      setState({ ...EMPTY, status: "error", error: lastError || "Failed" });
-    }
-  }
+    const refreshForKnownSession = (sessionID: string) => {
+      if (knownSessionIDs.has(sessionID)) scheduleRefresh();
+    };
 
-  // ---------------------------------------------------------------------------
-  // Reactive effect — event subscriptions (identical to opencode-costs)
-  // ---------------------------------------------------------------------------
-  createEffect(() => {
-    const u1 = api.event.on("message.updated", (event) => {
-      if (knownSessionIds.has(event.properties.info.sessionID)) scheduleRefresh();
+    const stopUsageUpdate = context.data.on("session.usage.updated", (event) => {
+      refreshForKnownSession(event.data.sessionID);
     });
-    const u2 = api.event.on("message.removed", (event) => {
-      if (knownSessionIds.has(event.properties.sessionID)) scheduleRefresh();
+    const stopExecution = context.data.on("session.execution.succeeded", (event) => {
+      refreshForKnownSession(event.data.sessionID);
     });
-    const u3 = api.event.on("session.created", (event) => {
-      const parentId = event.properties.info.parentID;
-      if (parentId && knownSessionIds.has(parentId)) scheduleRefresh();
-    });
-    const u4 = api.event.on("session.updated", (event) => {
-      const info = event.properties.info;
-      if (
-        knownSessionIds.has(info.id) ||
-        (info.parentID && knownSessionIds.has(info.parentID))
-      ) {
+    const stopSessionCreated = context.data.on("session.created", (event) => {
+      if (event.data.parentID && knownSessionIDs.has(event.data.parentID)) {
         scheduleRefresh();
       }
     });
-    const u5 = api.event.on("session.deleted", (event) => {
-      if (knownSessionIds.has(event.properties.info.id)) scheduleRefresh();
-    });
-    const u6 = api.event.on("tui.session.select", (e: SessionSelectEvent) => {
-      const newSid = e?.properties?.sessionID;
-      if (newSid) {
-        lastSessionId = newSid;
-        knownSessionIds = new Set([newSid]);
-        setState({ ...EMPTY });
-        load(newSid);
-      }
+    const stopSessionSelected = context.data.on("tui.session.select", (event) => {
+      lastSessionID = event.data.sessionID;
+      knownSessionIDs = new Set([lastSessionID]);
+      setState({ ...EMPTY });
+      void refresh(lastSessionID);
     });
 
-    onCleanup(() => {
-      disposed = true;
-      if (refreshTimer) clearTimeout(refreshTimer);
-      u1();
-      u2();
-      u3();
-      u4();
-      u5();
-      u6();
-    });
-  });
-
-  api.slots.register({
-    order: SIDEBAR_ORDER,
-    slots: {
-      sidebar_content(_ctx: unknown, props: TuiSlotProps) {
-        const sid = props?.session_id;
-        if (!sid) return null;
-        if (sid && sid !== lastSessionId) {
-          lastSessionId = sid;
-          knownSessionIds = new Set([sid]);
+    const stopSlot = context.ui.slot({
+      append: "sidebar.content",
+      render: ({ sessionID }) => {
+        if (sessionID !== lastSessionID) {
+          lastSessionID = sessionID;
+          knownSessionIDs = new Set([sessionID]);
           setState({ ...EMPTY });
-          load(sid);
+          void refresh(sessionID);
         }
 
         const totalTokens = () => {
-          const s = state();
-          return (
-            s.input + s.output + s.reasoning + s.cacheRead + s.cacheWrite
-          );
+          const usage = state();
+          return usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite;
         };
         const cacheRatio = () => {
-          const s = state();
-          const base = s.input + s.cacheWrite;
-          if (base === 0) return s.cacheRead > 0 ? "∞" : "—";
-          return `${(s.cacheRead / base).toFixed(1)}×`;
+          const usage = state();
+          const base = usage.input + usage.cacheWrite;
+          if (base === 0) return usage.cacheRead > 0 ? "∞" : "—";
+          return `${(usage.cacheRead / base).toFixed(1)}×`;
+        };
+        const costColor = () => {
+          if (state().cost < 5) return context.theme.text.feedback.info.default;
+          if (state().cost < 25) return context.theme.text.feedback.warning.default;
+          return context.theme.text.feedback.error.default;
         };
 
         return (
-          <Show
-            when={
-              state().status !== "ready" ||
-              state().turns > 0 ||
-              totalTokens() > 0 ||
-              state().cost > 0
-            }
-          >
+          <Show when={state().status !== "ready" || state().turns > 0 || totalTokens() > 0 || state().cost > 0}>
             <box gap={0}>
-            <box flexDirection="row" justifyContent="space-between">
-              <text fg={api.theme.current.text}>
-                <b>Session Token Summary</b>
-              </text>
-              <text fg={api.theme.current.textMuted}>
-                {"↻ " + state().turns + " turn" + (state().turns === 1 ? "" : "s")}
-              </text>
-            </box>
-            <Show when={state().status === "loading"}>
-              <text fg={api.theme.current.textMuted}>Loading…</text>
-            </Show>
-            <Show when={state().status === "error"}>
-              <text fg={api.theme.current.error}>
-                {state().error || "Unknown error"}
-              </text>
-            </Show>
-            <Show when={state().status === "ready"}>
-              <box gap={0}>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={api.theme.current.textMuted}>↑ in</text>
-                  <text fg={api.theme.current.text}>{fmt(state().input)}</text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={api.theme.current.textMuted}>↓ out</text>
-                  <text fg={api.theme.current.text}>{fmt(state().output)}</text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={api.theme.current.textMuted}>▤ cache write</text>
-                  <text fg={api.theme.current.text}>
-                    {fmt(state().cacheWrite)}
-                  </text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={api.theme.current.textMuted}>▤ cache read</text>
-                  <text fg={api.theme.current.text}>
-                    {fmt(state().cacheRead)}
-                  </text>
-                </box>
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={api.theme.current.textMuted}>ø cache hit ratio</text>
-                  <text fg={api.theme.current.text}>{cacheRatio()}</text>
-                </box>
-                <Show when={state().reasoning > 0}>
-                  <box flexDirection="row" justifyContent="space-between">
-                    <text fg={api.theme.current.textMuted}>✦ think</text>
-                    <text fg={api.theme.current.text}>
-                      {fmt(state().reasoning)}
-                    </text>
-                  </box>
-                </Show>
-                <box
-                  height={1}
-                  border={["top"]}
-                  borderColor={api.theme.current.border}
-                />
-                <box flexDirection="row" justifyContent="space-between">
-                  <text fg={api.theme.current.textMuted}>Σ total</text>
-                  <text fg={api.theme.current.primary}>
-                    {fmt(totalTokens())}
-                  </text>
-                </box>
-                <Show when={state().cost > 0}>
-                  <box flexDirection="row" justifyContent="space-between">
-                    <text fg={api.theme.current.textMuted}>
-                      {state().costMode === "estimated"
-                        ? "$ est. cost"
-                        : state().costMode === "mixed"
-                          ? "$ cost incl. est."
-                          : "$ cost"}
-                    </text>
-                    <text fg={costColor(state().cost, api)}>
-                      {fmtCost(state().cost)}
-                    </text>
-                  </box>
-                </Show>
+              <box flexDirection="row" justifyContent="space-between">
+                <text fg={context.theme.text.default} attributes={TextAttributes.BOLD}>Session Token Summary</text>
+                <text fg={context.theme.text.subdued}>{"↻ " + state().turns + " turn" + (state().turns === 1 ? "" : "s")}</text>
               </box>
-            </Show>
+              <Show when={state().status === "loading"}>
+                <text fg={context.theme.text.subdued}>Loading…</text>
+              </Show>
+              <Show when={state().status === "error"}>
+                <text fg={context.theme.text.feedback.error.default}>{state().error || "Unknown error"}</text>
+              </Show>
+              <Show when={state().status === "ready"}>
+                <box gap={0}>
+                  <UsageRow label="↑ in" value={fmt(state().input)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  <UsageRow label="↓ out" value={fmt(state().output)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  <UsageRow label="▤ cache write" value={fmt(state().cacheWrite)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  <UsageRow label="▤ cache read" value={fmt(state().cacheRead)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  <UsageRow label="ø cache hit ratio" value={cacheRatio()} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  <Show when={state().reasoning > 0}>
+                    <UsageRow label="✦ think" value={fmt(state().reasoning)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  </Show>
+                  <box height={1} border={["top"]} borderColor={context.theme.border.default} />
+                  <box flexDirection="row" justifyContent="space-between">
+                    <text fg={context.theme.text.subdued}>Σ total</text>
+                    <text fg={context.theme.text.feedback.info.default}>{fmt(totalTokens())}</text>
+                  </box>
+                  <Show when={state().cost > 0}>
+                    <box flexDirection="row" justifyContent="space-between">
+                      <text fg={context.theme.text.subdued}>
+                        {state().costMode === "estimated"
+                          ? "$ est. cost"
+                          : state().costMode === "mixed"
+                            ? "$ cost incl. est."
+                            : "$ cost"}
+                      </text>
+                      <text fg={costColor()}>{fmtCost(state().cost)}</text>
+                    </box>
+                  </Show>
+                </box>
+              </Show>
             </box>
           </Show>
         );
       },
-    },
-  });
-};
+    });
 
-const pluginModule: TuiPluginModule & { id: string } = {
-  id,
-  tui,
-};
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      stopUsageUpdate();
+      stopExecution();
+      stopSessionCreated();
+      stopSessionSelected();
+      stopSlot();
+    };
+  },
+});
 
-export default pluginModule;
+function UsageRow(props: { label: string; value: string; labelColor: RGBA; valueColor: RGBA }) {
+  return (
+    <box flexDirection="row" justifyContent="space-between">
+      <text fg={props.labelColor}>{props.label}</text>
+      <text fg={props.valueColor}>{props.value}</text>
+    </box>
+  );
+}
