@@ -29,8 +29,9 @@ subagent split, model split, what the prompt cache saved you, truncated/errored/
 steps, session age, and how long the agents were actually busy.
 
 **A full session details page** — one click replaces the main panel with the complete
-breakdown: tokens, cost, activity per tool, per agent, per model and per subagent, the
-slowest step, and the last provider error.
+breakdown: tokens, cost, activity with how long each tool ran, per agent, per model and
+per subagent, how deep the session family goes, the slowest step, the retries, and the
+last provider error.
 
 Nothing here costs an extra request. Every number is derived from the session and message
 data the panel already reads, so expanding the block or opening the page is instant.
@@ -163,6 +164,7 @@ main panel is replaced by the full breakdown for that session:
 ```
  Session Details                                                    ↻ 112 turns
  ses_ecs82d3a8ffe4Imi5BQg02CdU4                                        esc back
+ C:\work\esuyo-opencode-session · fork of ses_9a4c7d2b1e · interrupted
  ──────────────────────────────────────────────────────────────────────────────
  Tokens
  ↑ in                                                                    626.3K
@@ -178,27 +180,28 @@ main panel is replaced by the full breakdown for that session:
  ≈ saved                                                                  $6.10
 
  Activity
- ▣ tools                                                       560 · 112 failed
-   edit                                                                     112
-   grep                                                                     112
-   read                                                                     112
-   shell                                                       112 · 112 failed
-   write                                                                    112
+ ▣ tools                                                560 · 112 failed · 2h14
+   edit                                                               112 · 41m
+   grep                                                                112 · 3m
+   read                                                                112 · 2m
+   shell                                                112 · 112 failed · 1h04
+   write                                                              112 · 22m
  ≡ files                                                                      1
- └ subagents                                                           1 · 1.2M
+ └ subagents                                                1 · 1.2M · 2 levels
  × issues                                                             1 retried
  × last error                                             429 too many requests
+ ↻ retries                                        3× max · 529 overloaded_error
 
  Agents
-   build                                               476 steps · 58.1M · 1h40
-   explore                                                84 steps · 6.4M · 12m
+   build                            476 steps · 58.1M · 1h40 · $12.10 · ø 96.4%
+   explore                              84 steps · 6.4M · 12m · $2.11 · ø 91.2%
 
  Models
    claude-3-7-sonnet-thinking                                   84 steps · 9.5M
    qwen3.8-flash-next-iq3_s                             28 steps · 3.2M · $4.10
 
  Subagents
-   explore the auth module                                         1.2M · $0.84
+   explore the auth module              explore · succeeded · 4m · 1.2M · $0.84
 
  Timing
  ↺ initiated                                                               2h58
@@ -212,12 +215,23 @@ right-aligned, so numbers line up on their last digit and long model IDs stay re
 a wide terminal. Each breakdown is capped at eight rows with a `+N more` line, and a
 model row shows a cost only when the API reported one for those steps.
 
-Two rows on the page need a word of explanation:
+The line under the session id tells you where the session ran, whether it was forked, and
+how it ended. Long paths give way first, because the fork and the outcome are the parts
+worth reading.
 
-- **`Agents`** splits the session by the agent that ran each step, and the last figure is
-  how long that agent was busy. Because subagents run at the same time, those per-agent
-  figures can add up to more than the session's `→ busy` total — that is expected, and it
-  is why the section shows absolute time rather than a share.
+Some rows need a word of explanation:
+
+- **`Agents`** splits the session by the agent that ran each step, and the last two figures
+  are what that agent cost and its own cache hit rate. Because subagents run at the same
+  time, per-agent busy time can add up to more than the session's `→ busy` total — that is
+  expected, and it is why the section shows absolute time rather than a share.
+- **`Subagents`** shows each child session's agent, how it ended, and how long it ran. The
+  time is the child's wall clock from creation to its last update, not its working time.
+- **Tool durations** are how long each tool actually ran, counted once when tools overlap.
+  They appear only when the server reports tool timings, so a tool row can legitimately
+  show just its call count.
+- **`↻ retries`** is the highest attempt any step reached, plus the most recent reason a
+  step was retried. `× issues` counts them; this row explains them.
 - **`× last error`** is the most recent provider error in the session family, with its
   status when the provider sent one. Long messages are clipped to the value column.
 
@@ -241,9 +255,9 @@ Two rows on the page need a word of explanation:
 | --- | --- |
 | No panel in the sidebar | Restart the TUI. Check the entry is in `cli.json` (not `opencode.json`) and points at the directory, not `tui.tsx`. Check `session.sidebar` in `cli.json`. |
 | No `ø cache hit rate` row and no `Session Summary` block | You installed the npm name `opencode-plugin-session-token-summary`, which is the upstream original. Point the entry at this repository. |
-| A row is missing | Its data is not available for this session. `≡ files`, `≈ saved` and `→ busy` in particular depend on message snapshots, catalog pricing, and completed step timestamps. |
+| A row is missing | Its data is not available for this session. `≡ files`, `≈ saved`, `→ busy` and the tool durations in particular depend on message snapshots, catalog pricing, completed step timestamps, and completed tool timestamps. |
 | Cost looks wrong | Check the label. `$ est. cost` and `$ cost incl. est.` are catalog estimates, not billed amounts. |
-| A symbol renders as a box | The rows use single-width symbols from the Arrows, Box Drawing, Block Elements and Geometric Shapes ranges. A font without those glyphs will show tofu; the panel itself is unaffected. |
+| A symbol renders as a box | The rows use single-width symbols from the Latin-1 Supplement, Arrows, Box Drawing, Block Elements and Geometric Shapes ranges. A font without those glyphs will show tofu; the panel itself is unaffected. |
 
 ## Credit and license
 
@@ -261,7 +275,8 @@ What this fork adds on top of upstream `2.0.0`:
   breakdowns, session age, and busy time that counts concurrent subagent work once
 - the session details page in the main panel, opened from a link or the command palette,
   with correct back-navigation and no extra requests
-- the page's per-agent split, slowest step, and last provider error
+- the page's per-agent split, slowest step, provider errors and retry detail, per-tool
+  timings, subagent outcomes, family depth, and the session identity line
 - [docs](docs) recording which metrics were considered and why some were rejected
 
 MIT, same as the original — see [LICENSE](LICENSE).

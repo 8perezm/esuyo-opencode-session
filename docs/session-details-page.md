@@ -219,7 +219,7 @@ M1, M2 and M3 are implemented; the live TUI check is still outstanding.
 | Open | `onMouseDown` on the `⤺ open session details` row, or palette command `session.usage.page` |
 | Close | inline command bound to `escape,ctrl+c`, in a plugin keymap layer that is disabled unless the page is open; `closePage` reads the return target from the live route |
 | Back target | `returnRoute` captured from `router.current()` at open time, carried in the route data and read back by the page — the host diff viewer's pattern |
-| Page sections | Tokens, Cost, Activity (+ per-tool breakdown, + last error), Agents, Models, Subagents, Timing (+ slowest step) |
+| Page sections | Tokens, Cost, Activity (+ per-tool breakdown, + last error, + retries), Agents, Models, Subagents, Timing (+ slowest step), plus an identity line under the session id |
 
 Deviations from the plan, all deliberate:
 
@@ -284,4 +284,26 @@ close layer being enabled only while the page is open, request counters unchange
 close, the page's section headers and value column, the three original splits (`toolSplit`,
 `modelSplit`, `subagentList`) including their sort order, and the new rows: per-agent split with
 per-agent busy time against the merged session total, slowest step with its agent, and the newest
-error picked out of out-of-order messages. Baseline is now **25 pass / 113 assertions**.
+error picked out of out-of-order messages.
+
+### Third round: identity, family shape, tool time, retry detail (same day)
+
+Six more page-only rows, all from payloads the sidebar already fetches.
+
+| Row | Notes |
+| --- | --- |
+| Identity line | `directory · fork of ses_… · interrupted`, from `location.directory`, `fork` and `outcome` on the root session. Clipping is deliberate: the directory absorbs the cut, because the fork reference and the outcome are the short facts the line exists to show. A first version clipped the whole line and lost the outcome. |
+| `└ subagents 2 · 132 · 3 levels` | `familyDepth` walks each child's parent chain with a `seen` set so a malformed cycle cannot spin. |
+| Subagent rows | `agent · outcome · span · tokens · cost`. The span is the child session's created-to-updated wall time, **not** merged busy time: `message.list` payloads carry no session id, so the panel cannot attribute a descendant's messages to a specific child. Naming it "busy" would be a claim the data does not support. |
+| Tool durations | `▣ tools 6 · 3 failed · 4s` and one figure per tool. Start is `time.ran` when present (before that the step is only streaming input), else `time.created`. Per-tool figures are that tool's own merged runs, so they can exceed the session total when tools overlap. Omitted entirely when the server leaves `completed` out — a fixture case, not a hypothetical. |
+| `Agents` cost and cache share | `· $1.50 · ø 8.9%`. `ø` is the sidebar's cache-hit marker; the rate is null when an agent has no prompt tokens to divide by, rather than a misleading 0%. |
+| `↻ retries 3× max · 529 overloaded` | Highest `retry.attempt` reached plus the newest `retry.error`, chosen by `retry.at` for the same out-of-order reason as `× last error`. |
+
+Deliberately left out on request: the tool failure *message* from `state.error`. The page stays
+numbers, with `× last error` as the one place prose appears.
+
+Test coverage added: tool durations with overlapping runs merged, the `ran`-missing fallback, and
+the no-timestamps case; subagent agent/outcome/span; family depth at 1, 2 and 3 levels; the identity
+fields; retry attempt and newest retry reason; and the page render asserting the identity line, the
+retries row, the family depth, a subagent's outcome, an agent's cost and cache share, and a tool
+duration. Baseline is now **30 pass / 129 assertions**.

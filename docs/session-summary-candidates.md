@@ -174,6 +174,17 @@ Built as of 2026-10-14, with the wording settled during implementation:
 | A6 | `→ slowest 1m12s · build` in `Timing` | Longest completed step in the whole family, tagged with the agent that ran it. Steps still running are excluded, same as `→ busy`. |
 | A9 | `× last error 429 too many requests` in `Activity` | Newest `message.error` by `time.created`, not by array position: messages are collected per session and newest-first, so the arrays are not chronological. Formatted `status message`, falling back to the error `type`. Clipped to `PAGE_VALUE_WIDTH` (43) so a long provider message cannot widen the row. |
 
+Third round, same day — the remaining zero-request rows the user asked for:
+
+| Row | Source | Notes |
+| --- | --- | --- |
+| Header identity line | `session.location.directory`, `session.fork`, `session.outcome` (A10) | `directory · fork of ses_… · interrupted`. The directory is the part that gets clipped: the fork reference and the outcome are short and are the reason the line exists, so the budget is spent on them first. |
+| `└ subagents 3 · 1.2M · 2 levels` | parent chain of the already fetched descendants | Family shape. Depth is walked per child with a `seen` set, so a malformed cycle cannot spin. |
+| Subagent rows: `explore · succeeded · 4m · 1.2M · $0.84` | `session.agent`, `session.outcome`, `session.time` | The span is created-to-updated on the child session, not merged busy time: the panel holds the child's messages but cannot tell which of them belong to which child, because `message.list` payloads carry no session id. |
+| `▣ tools 560 · 112 failed · 12m` and per-tool `bash 112 · 1m` | tool part `time.ran → completed`, falling back to `created` | Stats only — the failure *message* on the tool error state is deliberately not rendered. Per-tool time is that tool's own merged runs, so it can exceed the session total when tools overlap. Renders nothing when the server leaves `completed` out, which is the case in some payloads and is why the field is optional rather than assumed. |
+| `Agents` rows gain `· $1.00 · ø 8.9%` | `message.cost`, and `message.tokens` per agent | `ø` is the same marker the sidebar uses for cache hit rate. Null when the agent has no prompt tokens to divide by. |
+| `↻ retries 3× max · 429 too many requests` | `message.retry.attempt` / `.at` / `.error` | Highest attempt reached plus the newest retry reason. `↻` also marks the turn count in the page header; it is the only repeat, and retry is what the glyph means. |
+
 The zero-request rule applies to the page as well: it renders the state the sidebar already fetched, and `test/tui.test.ts` asserts the request counters do not move across open and close.
 
 ---
