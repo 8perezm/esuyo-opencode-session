@@ -1,11 +1,10 @@
 import type {
-  AssistantMessage,
-  Message,
-  Model,
-  OpencodeClient,
-  Provider,
-  Session,
-} from "@opencode-ai/sdk/v2";
+  SessionMessageAssistant,
+  SessionMessageInfo,
+  ModelInfo,
+  OpenCodeClient,
+  SessionInfo,
+} from "@opencode/client";
 
 export type TokenTotals = {
   input: number;
@@ -18,15 +17,16 @@ export type TokenTotals = {
 };
 
 export type DescendantData = {
-  sessions: ReadonlyArray<Session>;
+  sessions: ReadonlyArray<SessionInfo>;
+  messages: ReadonlyArray<SessionMessageAssistant>;
   turns: number;
 };
 
 export type CostMode = "reported" | "estimated" | "mixed";
 
 type CostMessage = Pick<
-  AssistantMessage,
-  "providerID" | "modelID" | "tokens"
+  SessionMessageAssistant,
+  "model" | "tokens"
 > & { cost?: number };
 
 export const EMPTY: TokenTotals = {
@@ -39,29 +39,11 @@ export const EMPTY: TokenTotals = {
   cost: 0,
 };
 
-export const EMPTY_DESCENDANTS: DescendantData = { sessions: [], turns: 0 };
 const FETCH_CONCURRENCY = 4;
 
-function hasPrice(model: Model): boolean {
-  const cost = model.cost;
-  return (
-    cost.input > 0 ||
-    cost.output > 0 ||
-    cost.cache.read > 0 ||
-    cost.cache.write > 0 ||
-    Boolean(cost.tiers?.some((tier) =>
-      tier.input > 0 ||
-      tier.output > 0 ||
-      tier.cache.read > 0 ||
-      tier.cache.write > 0
-    )) ||
-    Boolean(
-      cost.experimentalOver200K &&
-      (cost.experimentalOver200K.input > 0 ||
-        cost.experimentalOver200K.output > 0 ||
-        cost.experimentalOver200K.cache.read > 0 ||
-        cost.experimentalOver200K.cache.write > 0),
-    )
+function hasPrice(model: ModelInfo): boolean {
+  return model.cost.some((cost) =>
+    cost.input > 0 || cost.output > 0 || cost.cache.read > 0 || cost.cache.write > 0
   );
 }
 
@@ -70,45 +52,42 @@ function normalizedModelID(id: string): string {
 }
 
 function pricingFor(
-  providers: ReadonlyArray<Provider>,
+  models: ReadonlyArray<ModelInfo>,
   providerID: string,
   modelID: string,
-): Model | undefined {
-  const provider = providers.find((entry) => entry.id === providerID);
-  const exact = provider?.models[modelID] ??
-    Object.values(provider?.models ?? {}).find((model) => model.id === modelID);
+): ModelInfo | undefined {
+  const exact = models.find((model) =>
+    model.providerID === providerID && (model.id === modelID || model.modelID === modelID)
+  );
   if (exact && hasPrice(exact)) return exact;
 
   const normalized = normalizedModelID(modelID);
-  return providers
-    .flatMap((entry) => Object.values(entry.models))
-    .find(
-      (model) =>
-        hasPrice(model) &&
-        (model.id === modelID || normalizedModelID(model.id) === normalized),
-    );
+  return models.find(
+    (model) =>
+      hasPrice(model) &&
+      (normalizedModelID(model.id) === normalized || normalizedModelID(model.modelID) === normalized),
+  );
 }
 
 export function estimateCost(
   messages: ReadonlyArray<CostMessage>,
-  providers: ReadonlyArray<Provider>,
+  models: ReadonlyArray<ModelInfo>,
 ): number {
   let total = 0;
   for (const message of messages) {
-    const model = pricingFor(providers, message.providerID, message.modelID);
-    if (!model) continue;
+    const model = pricingFor(models, message.model.providerID, message.model.id);
+    if (!model || !message.tokens) continue;
 
     const tokens = message.tokens;
     const contextTokens = tokens.input + tokens.cache.read + tokens.cache.write;
     const cost =
-      model.cost.tiers
-        ?.filter(
-          (entry) => entry.tier.type === "context" && contextTokens > entry.tier.size,
+      model.cost
+        .filter(
+          (entry) => entry.tier?.type === "context" && contextTokens > entry.tier.size,
         )
-        .sort((a, b) => b.tier.size - a.tier.size)[0] ??
-      (model.cost.experimentalOver200K && contextTokens > 200_000
-        ? model.cost.experimentalOver200K
-        : model.cost);
+        .sort((a, b) => (b.tier?.size ?? 0) - (a.tier?.size ?? 0))[0] ??
+      model.cost.find((entry) => !entry.tier);
+    if (!cost) continue;
 
     total +=
       (tokens.input * cost.input +
@@ -123,11 +102,11 @@ export function estimateCost(
 export function combineCosts(
   reportedCost: number,
   messages: ReadonlyArray<CostMessage>,
-  providers: ReadonlyArray<Provider>,
+  models: ReadonlyArray<ModelInfo>,
 ): { cost: number; mode: CostMode } {
   const estimatedCost = estimateCost(
     messages.filter((message) => message.cost === 0),
-    providers,
+    models,
   );
   return {
     cost: reportedCost + estimatedCost,
@@ -140,19 +119,19 @@ export function combineCosts(
   };
 }
 
-export function isAssistant(m: Message): m is AssistantMessage {
-  return m.role === "assistant";
+export function isAssistant(m: SessionMessageInfo): m is SessionMessageAssistant {
+  return m.type === "assistant";
 }
 
-export function computeTotals(messages: ReadonlyArray<Message>): TokenTotals {
+export function computeTotals(messages: ReadonlyArray<SessionMessageInfo>): TokenTotals {
   const t: TokenTotals = { ...EMPTY };
   for (const m of messages) {
     if (!isAssistant(m)) continue;
-    t.input += m.tokens.input;
-    t.output += m.tokens.output;
-    t.reasoning += m.tokens.reasoning;
-    t.cacheRead += m.tokens.cache.read;
-    t.cacheWrite += m.tokens.cache.write;
+    t.input += m.tokens?.input ?? 0;
+    t.output += m.tokens?.output ?? 0;
+    t.reasoning += m.tokens?.reasoning ?? 0;
+    t.cacheRead += m.tokens?.cache.read ?? 0;
+    t.cacheWrite += m.tokens?.cache.write ?? 0;
     t.cost += m.cost ?? 0;
     t.turns += 1;
   }
@@ -160,7 +139,7 @@ export function computeTotals(messages: ReadonlyArray<Message>): TokenTotals {
 }
 
 export function sumSessions(
-  sessions: ReadonlyArray<Session>,
+  sessions: ReadonlyArray<SessionInfo>,
   turns: number,
 ): TokenTotals {
   const t: TokenTotals = { ...EMPTY };
@@ -198,18 +177,47 @@ export async function mapWithConcurrency<Input, Output>(
   return results;
 }
 
+export async function fetchAssistantMessages(
+  client: OpenCodeClient,
+  sessionID: string,
+): Promise<SessionMessageAssistant[]> {
+  const messages: SessionMessageAssistant[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await client.message.list({
+      sessionID,
+      type: "assistant",
+      limit: 100,
+      ...(cursor ? { cursor } : { order: "desc" }),
+    });
+    messages.push(...page.data.filter(isAssistant));
+    cursor = page.cursor.next ?? undefined;
+  } while (cursor);
+  return messages;
+}
+
 export async function fetchDescendants(
-  client: OpencodeClient,
+  client: OpenCodeClient,
   rootID: string,
 ): Promise<DescendantData> {
-  const out: Session[] = [];
+  const out: SessionInfo[] = [];
   const visited = new Set([rootID]);
   let level = [rootID];
 
   while (level.length > 0) {
     const childLists = await mapWithConcurrency(level, async (sessionID) => {
-      const res = await client.session.children({ sessionID });
-      return res.data ?? [];
+      const children: SessionInfo[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await client.session.list({
+          parentID: sessionID,
+          limit: 100,
+          ...(cursor ? { cursor } : { order: "desc" }),
+        });
+        children.push(...page.data);
+        cursor = page.cursor.next ?? undefined;
+      } while (cursor);
+      return children;
     });
     const nextLevel: string[] = [];
 
@@ -224,11 +232,10 @@ export async function fetchDescendants(
     level = nextLevel;
   }
 
-  const messages = await mapWithConcurrency(out, async (session) => {
-    const res = await client.session.messages({ sessionID: session.id });
-    return res.data ?? [];
-  });
-  const turns = messages.flat().filter((message) => isAssistant(message.info)).length;
+  const messages = (await mapWithConcurrency(out, (session) =>
+    fetchAssistantMessages(client, session.id)
+  )).flat();
+  const turns = messages.length;
 
-  return { sessions: out, turns };
+  return { sessions: out, messages, turns };
 }

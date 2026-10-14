@@ -1,8 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 
-import { Plugin } from "@opencode-ai/plugin/tui";
+import { Plugin } from "@opencode/plugin/tui";
 import { TextAttributes, type RGBA } from "@opentui/core";
-import { Show, createSignal } from "solid-js";
+import { Show, createEffect, createSignal } from "solid-js";
+import { combineCosts, fetchAssistantMessages, fetchDescendants, sumSessions } from "./usage";
 
 const id = "opencode-session-tokens-sidebar";
 const REFRESH_DELAY_MS = 200;
@@ -43,10 +44,6 @@ function fmtCost(c: number): string {
   return "$" + c.toFixed(2);
 }
 
-function normalizedModelID(id: string): string {
-  return (id.split("/").pop() || id).toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null && "message" in error) {
@@ -80,93 +77,39 @@ export default Plugin.define({
       const currentLoadID = ++loadID;
 
       try {
-        await context.data.session.sync(sessionID);
-        const family = context.data.session.family(sessionID);
+        const [root, descendants, rootMessages] = await Promise.all([
+          context.client.session.get({ sessionID }),
+          fetchDescendants(context.client, sessionID),
+          fetchAssistantMessages(context.client, sessionID),
+        ]);
         if (disposed || currentLoadID !== loadID) return;
 
-        knownSessionIDs = new Set(family);
-        const totals: UsageState = { ...EMPTY, status: "ready" };
-        const assistantMessages = [] as Array<Awaited<ReturnType<typeof context.client.message.list>>["data"][number] & { type: "assistant" }>;
-
-        for (const id of family) {
-          let cursor: string | undefined;
-          do {
-            const page = await context.client.message.list({
-              sessionID: id,
-              limit: 100,
-              ...(cursor ? { cursor } : { order: "desc" }),
-            });
-            assistantMessages.push(...page.data.filter((message) => message.type === "assistant"));
-            cursor = page.cursor.next ?? undefined;
-          } while (cursor);
-        }
-        if (disposed || currentLoadID !== loadID) return;
-
-        for (const id of family) {
-          const session = context.data.session.get(id);
-          if (session) {
-            totals.input += session.tokens.input;
-            totals.output += session.tokens.output;
-            totals.reasoning += session.tokens.reasoning;
-            totals.cacheRead += session.tokens.cache.read;
-            totals.cacheWrite += session.tokens.cache.write;
-            totals.cost += session.cost;
-          }
-
-        }
-
-        totals.turns = assistantMessages.length;
+        knownSessionIDs = new Set([sessionID, ...descendants.sessions.map((session) => session.id)]);
+        const assistantMessages = [...rootMessages, ...descendants.messages];
+        const totals: UsageState = {
+          ...sumSessions([root, ...descendants.sessions], assistantMessages.length),
+          status: "ready",
+          costMode: "reported",
+        };
 
         try {
-          await context.data.location.model.sync(context.location);
-          const models = context.data.location.model.list(context.location) ?? [];
-          const estimatedCost = assistantMessages.reduce((total, message) => {
-            if (message.cost !== 0 || !message.tokens) return total;
-            const model = models.find(
-              (candidate) =>
-                candidate.providerID === message.model.providerID &&
-                (candidate.modelID === message.model.id || candidate.id === message.model.id) &&
-                candidate.cost.length > 0,
-            ) ?? models.find(
-              (candidate) =>
-                candidate.cost.length > 0 &&
-                (normalizedModelID(candidate.modelID) === normalizedModelID(message.model.id) ||
-                  normalizedModelID(candidate.id) === normalizedModelID(message.model.id)),
-            );
-            if (!model) return total;
-
-            const contextTokens =
-              message.tokens.input + message.tokens.cache.read + message.tokens.cache.write;
-            const cost = model.cost
-              .filter((entry) => entry.tier && contextTokens > entry.tier.size)
-              .sort((a, b) => (b.tier?.size ?? 0) - (a.tier?.size ?? 0))[0] ??
-              model.cost.find((entry) => !entry.tier);
-            if (!cost) return total;
-
-            return total +
-              (message.tokens.input * cost.input +
-                (message.tokens.output + message.tokens.reasoning) * cost.output +
-                message.tokens.cache.read * cost.cache.read +
-                message.tokens.cache.write * cost.cache.write) /
-                1_000_000;
-          }, 0);
-
-          if (estimatedCost > 0) {
-            totals.cost += estimatedCost;
-            totals.costMode = totals.cost > estimatedCost ? "mixed" : "estimated";
+          if (assistantMessages.some((message) => message.cost === 0 && message.tokens)) {
+            const models = await context.client.model.list({ location: context.location });
+            const combined = combineCosts(totals.cost, assistantMessages, models.data);
+            totals.cost = combined.cost;
+            totals.costMode = combined.mode;
           }
         } catch {
           // Pricing is optional; session totals remain available when it cannot load.
         }
 
+        if (disposed || currentLoadID !== loadID) return;
         setState(totals);
       } catch (error) {
         if (disposed || currentLoadID !== loadID) return;
-        setState({
-          ...EMPTY,
-          status: "error",
-          error: errorMessage(error),
-        });
+        if (state().status !== "ready") {
+          setState({ ...EMPTY, status: "error", error: errorMessage(error) });
+        }
       }
     };
 
@@ -185,22 +128,22 @@ export default Plugin.define({
         scheduleRefresh();
       }
     });
-    const stopSessionSelected = context.data.on("tui.session.select", (event) => {
-      lastSessionID = event.data.sessionID;
-      knownSessionIDs = new Set([lastSessionID]);
-      setState({ ...EMPTY });
-      void refresh(lastSessionID);
+    const stopSessionDeleted = context.data.on("session.deleted", (event) => {
+      refreshForKnownSession(event.data.sessionID);
     });
 
     const stopSlot = context.ui.slot({
       append: "sidebar.content",
-      render: ({ sessionID }) => {
-        if (sessionID !== lastSessionID) {
-          lastSessionID = sessionID;
-          knownSessionIDs = new Set([sessionID]);
-          setState({ ...EMPTY });
-          void refresh(sessionID);
-        }
+      render: (props) => {
+        createEffect(() => {
+          const sessionID = props.sessionID;
+          if (sessionID !== lastSessionID) {
+            lastSessionID = sessionID;
+            knownSessionIDs = new Set([sessionID]);
+            setState({ ...EMPTY });
+            void refresh(sessionID);
+          }
+        });
 
         const totalTokens = () => {
           const usage = state();
@@ -213,42 +156,42 @@ export default Plugin.define({
           return `${(usage.cacheRead / base).toFixed(1)}×`;
         };
         const costColor = () => {
-          if (state().cost < 5) return context.theme.text.feedback.info.default;
-          if (state().cost < 25) return context.theme.text.feedback.warning.default;
-          return context.theme.text.feedback.error.default;
+          if (state().cost < 5) return context.theme.text.feedback.info.base;
+          if (state().cost < 25) return context.theme.text.feedback.warning.base;
+          return context.theme.text.feedback.error.base;
         };
 
         return (
           <Show when={state().status !== "ready" || state().turns > 0 || totalTokens() > 0 || state().cost > 0}>
             <box gap={0}>
               <box flexDirection="row" justifyContent="space-between">
-                <text fg={context.theme.text.default} attributes={TextAttributes.BOLD}>Session Token Summary</text>
-                <text fg={context.theme.text.subdued}>{"↻ " + state().turns + " turn" + (state().turns === 1 ? "" : "s")}</text>
+                <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Session Token Summary</text>
+                <text fg={context.theme.text.muted}>{"↻ " + state().turns + " turn" + (state().turns === 1 ? "" : "s")}</text>
               </box>
               <Show when={state().status === "loading"}>
-                <text fg={context.theme.text.subdued}>Loading…</text>
+                <text fg={context.theme.text.muted}>Loading…</text>
               </Show>
               <Show when={state().status === "error"}>
-                <text fg={context.theme.text.feedback.error.default}>{state().error || "Unknown error"}</text>
+                <text fg={context.theme.text.feedback.error.base}>{state().error || "Unknown error"}</text>
               </Show>
               <Show when={state().status === "ready"}>
                 <box gap={0}>
-                  <UsageRow label="↑ in" value={fmt(state().input)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
-                  <UsageRow label="↓ out" value={fmt(state().output)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
-                  <UsageRow label="▤ cache write" value={fmt(state().cacheWrite)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
-                  <UsageRow label="▤ cache read" value={fmt(state().cacheRead)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
-                  <UsageRow label="ø cache hit ratio" value={cacheRatio()} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                  <UsageRow label="↑ in" value={fmt(state().input)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
+                  <UsageRow label="↓ out" value={fmt(state().output)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
+                  <UsageRow label="▤ cache write" value={fmt(state().cacheWrite)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
+                  <UsageRow label="▤ cache read" value={fmt(state().cacheRead)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
+                  <UsageRow label="ø cache hit ratio" value={cacheRatio()} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
                   <Show when={state().reasoning > 0}>
-                    <UsageRow label="✦ think" value={fmt(state().reasoning)} labelColor={context.theme.text.subdued} valueColor={context.theme.text.default} />
+                    <UsageRow label="✦ think" value={fmt(state().reasoning)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
                   </Show>
-                  <box height={1} border={["top"]} borderColor={context.theme.border.default} />
+                  <box height={1} border={["top"]} borderColor={context.theme.border.base} />
                   <box flexDirection="row" justifyContent="space-between">
-                    <text fg={context.theme.text.subdued}>Σ total</text>
-                    <text fg={context.theme.text.feedback.info.default}>{fmt(totalTokens())}</text>
+                    <text fg={context.theme.text.muted}>Σ total</text>
+                    <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>{fmt(totalTokens())}</text>
                   </box>
                   <Show when={state().cost > 0}>
                     <box flexDirection="row" justifyContent="space-between">
-                      <text fg={context.theme.text.subdued}>
+                      <text fg={context.theme.text.muted}>
                         {state().costMode === "estimated"
                           ? "$ est. cost"
                           : state().costMode === "mixed"
@@ -272,7 +215,7 @@ export default Plugin.define({
       stopUsageUpdate();
       stopExecution();
       stopSessionCreated();
-      stopSessionSelected();
+      stopSessionDeleted();
       stopSlot();
     };
   },

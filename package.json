@@ -1,6 +1,6 @@
 {
   "name": "opencode-plugin-session-token-summary",
-  "version": "0.5.0",
+  "version": "2.0.0",
   "description": "OpenCode TUI sidebar showing token usage across a session and its subagents.",
   "license": "MIT",
   "repository": {
@@ -34,26 +34,27 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test --preload @opentui/solid/preload",
     "check": "npm run typecheck && npm run test",
     "pack:check": "npm pack --dry-run",
     "prepublishOnly": "npm run check && npm run pack:check"
   },
   "engines": {
-    "opencode": ">=0.0.0-beta-18387"
+    "opencode": ">=2.0.28 <3"
   },
   "peerDependencies": {
-    "@opencode-ai/plugin": "0.0.0-beta-18387",
-    "@opencode-ai/sdk": "^1.17.9",
-    "@opentui/core": ">=0.5.8",
-    "@opentui/solid": ">=0.5.8",
+    "@opencode/plugin": "^2.0.28",
+    "@opencode/client": "^2.0.28",
+    "@opentui/core": "^0.6.4",
+    "@opentui/solid": "^0.6.4",
     "solid-js": "^1.9.12"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "0.0.0-beta-18387",
-    "@opencode-ai/sdk": "^1.17.9",
-    "@opentui/core": "0.5.8",
-    "@opentui/solid": "0.5.8",
+    "@opencode/plugin": "2.0.28",
+    "@opencode/client": "2.0.28",
+    "@opencode/theme": "2.0.28",
+    "@opentui/core": "0.6.4",
+    "@opentui/solid": "0.6.4",
     "solid-js": "^1.9.12",
     "@types/bun": "^1.3.14",
     "typescript": "^5.8.2"

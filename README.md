@@ -23,23 +23,29 @@ It aggregates the root session and all nested subagent sessions.
 
 | OpenCode version | Plugin version | Installation |
 | --- | --- | --- |
-| OpenCode 2 beta (`opencode2`) | `0.5.0` and later | Use the V2 instructions below. |
-| OpenCode V1 (`opencode`) | `0.4.1` | Install the pinned legacy package with the V1 instructions below. |
+| OpenCode V2 (`opencode`, `>=2.0.28 <3`) | `2.x` | Use the V2 instructions below. |
+| OpenCode V1 | `0.4.1` | Install the pinned legacy package with the V1 instructions below. |
 
 ## OpenCode 2 Install
 
-For a local checkout, add its TUI entrypoint to `~/.config/opencode/cli.json`:
+For a local checkout, run `npm ci`, then replace the existing package entry in
+`~/.config/opencode/cli.json` with the checkout directory. Preserve other plugins and settings:
 
 ```json
 {
+  "$schema": "https://opencode.ai/v2/cli.json",
   "plugins": [
-    "/absolute/path/to/opencode-plugin-session-token-summary/tui.tsx"
+    "/absolute/path/to/opencode-plugin-session-token-summary"
   ]
 }
 ```
 
-The published `0.4.x` package targets the legacy TUI plugin API and cannot be
-used with OpenCode 2.
+Use the directory, not `tui.tsx`: OpenCode V2 resolves the directory's `tui`
+entrypoint and skips direct-file TUI entries. Restart the TUI if it does not reload.
+
+After `2.0.0` is published, you can use `opencode-plugin-session-token-summary@^2`
+instead of the local path. The published `0.4.x` package targets the legacy TUI
+plugin API and cannot be used with OpenCode 2.
 
 ## OpenCode V1 Install
 
@@ -50,13 +56,16 @@ OpenCode V1 users must install the final legacy release, `0.4.1`:
 3. Enter `opencode-plugin-session-token-summary@0.4.1`.
 
 This creates an entry in `~/.config/opencode/tui.json`. Do not install an
-unversioned package in V1 after `0.5.0` is published, because later releases
+unversioned package in V1 after `2.0.0` is published, because later releases
 target OpenCode 2.
 
 ## Notes
 
-The panel uses the V2 session-family and message caches to aggregate descendant
-usage and count assistant turns.
+The panel reads V2 session totals and paginated assistant messages for the
+selected session and its nested descendants. It limits descendant requests to
+four concurrent operations and keeps the last complete snapshot if a background
+refresh fails. It works with the connected server, including remote servers,
+and needs no separate API key.
 
 Nonzero cost reported by OpenCode is shown as `$ cost`. For messages with an
 explicit zero cost, the plugin uses OpenCode's model

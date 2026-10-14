@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test";
+import type { Context, SlotClaim } from "@opencode/plugin/tui/context";
+import { RGBA, TextAttributes } from "@opentui/core";
+import { testRender } from "@opentui/solid";
+import { createSignal } from "solid-js";
+import plugin from "../tui";
 import type {
-  AssistantMessage,
-  Model,
-  OpencodeClient,
-  Provider,
-  Session,
-} from "@opencode-ai/sdk/v2";
+  SessionMessageAssistant as AssistantMessage,
+  ModelInfo as Model,
+  OpenCodeClient,
+  SessionInfo as Session,
+} from "@opencode/client";
 import {
   combineCosts,
   computeTotals,
   estimateCost,
+  fetchAssistantMessages,
   fetchDescendants,
   sumSessions,
 } from "../usage";
@@ -17,15 +22,11 @@ import {
 function assistant(id: string): AssistantMessage {
   return {
     id,
-    sessionID: "root",
-    role: "assistant",
+    type: "assistant",
     time: { created: 0 },
-    parentID: "parent",
-    modelID: "model",
-    providerID: "provider",
-    mode: "build",
+    model: { id: "model", providerID: "provider" },
     agent: "build",
-    path: { cwd: "/", root: "/" },
+    content: [],
     cost: 0.5,
     tokens: {
       input: 100,
@@ -39,11 +40,9 @@ function assistant(id: string): AssistantMessage {
 function session(id: string): Session {
   return {
     id,
-    slug: id,
     projectID: "project",
-    directory: "/",
+    location: { directory: "/" },
     title: id,
-    version: "1.17.9",
     cost: 1,
     tokens: {
       input: 50,
@@ -55,43 +54,38 @@ function session(id: string): Session {
   };
 }
 
-function provider(id: string, model: Model): Provider {
-  return {
-    id,
-    name: id,
-    source: "api",
-    env: [],
-    options: {},
-    models: { [model.id]: model },
-  };
-}
-
 function pricedModel(
   id: string,
   providerID: string,
-  cost: Model["cost"],
+  cost: Model["cost"][number],
 ): Model {
   return {
     id,
+    modelID: id,
     providerID,
-    cost,
+    cost: [cost],
   } as Model;
 }
 
 function clientFor(
   children: Record<string, Session[]>,
   messages: Record<string, AssistantMessage[]>,
-): OpencodeClient {
+): OpenCodeClient {
   return {
     session: {
-      children: async ({ sessionID }: { sessionID: string }) => ({
-        data: children[sessionID] ?? [],
-      }),
-      messages: async ({ sessionID }: { sessionID: string }) => ({
-        data: (messages[sessionID] ?? []).map((info) => ({ info, parts: [] })),
+      get: async ({ sessionID }: { sessionID: string }) => session(sessionID),
+      list: async ({ parentID }: { parentID: string }) => ({
+        data: children[parentID] ?? [],
+        cursor: {},
       }),
     },
-  } as unknown as OpencodeClient;
+    message: {
+      list: async ({ sessionID }: { sessionID: string }) => ({
+        data: messages[sessionID] ?? [],
+        cursor: {},
+      }),
+    },
+  } as unknown as OpenCodeClient;
 }
 
 describe("token aggregation", () => {
@@ -108,15 +102,14 @@ describe("cost estimation", () => {
   test("uses the same token categories and per-million rates as OpenCode", () => {
     const message = assistant("priced");
     message.cost = 0;
-    message.modelID = "claude-opus-4-6";
-    message.providerID = "anthropic";
-    const model = pricedModel(message.modelID, message.providerID, {
+    message.model = { id: "claude-opus-4-6", providerID: "anthropic" };
+    const model = pricedModel(message.model.id, message.model.providerID, {
       input: 3,
       output: 15,
       cache: { read: 0.3, write: 3.75 },
     });
 
-    expect(estimateCost([message], [provider("anthropic", model)])).toBeCloseTo(
+    expect(estimateCost([message], [model])).toBeCloseTo(
       0.0006855,
     );
   });
@@ -124,9 +117,8 @@ describe("cost estimation", () => {
   test("finds API pricing across providers for quota-backed model aliases", () => {
     const message = assistant("quota");
     message.cost = 0;
-    message.modelID = "claude-opus-4.6";
-    message.providerID = "github-copilot";
-    const quotaModel = pricedModel(message.modelID, message.providerID, {
+    message.model = { id: "claude-opus-4.6", providerID: "github-copilot" };
+    const quotaModel = pricedModel(message.model.id, message.model.providerID, {
       input: 0,
       output: 0,
       cache: { read: 0, write: 0 },
@@ -141,8 +133,8 @@ describe("cost estimation", () => {
       estimateCost(
         [message],
         [
-          provider("github-copilot", quotaModel),
-          provider("anthropic", apiModel),
+          quotaModel,
+          apiModel,
         ],
       ),
     ).toBeGreaterThan(0);
@@ -152,29 +144,28 @@ describe("cost estimation", () => {
     const reported = assistant("reported");
     const quota = assistant("quota");
     quota.cost = 0;
-    quota.modelID = "claude-opus-4-6";
-    quota.providerID = "anthropic";
-    const model = pricedModel(quota.modelID, quota.providerID, {
+    quota.model = { id: "claude-opus-4-6", providerID: "anthropic" };
+    const model = pricedModel(quota.model.id, quota.model.providerID, {
       input: 3,
       output: 15,
       cache: { read: 0.3, write: 3.75 },
     });
 
     expect(
-      combineCosts(reported.cost, [reported, quota], [provider("anthropic", model)]),
+      combineCosts(reported.cost!, [reported, quota], [model]),
     ).toEqual({ cost: 0.5006855, mode: "mixed" });
   });
 
   test("marks a fully estimated total", () => {
     const quota = assistant("quota");
     quota.cost = 0;
-    const model = pricedModel(quota.modelID, quota.providerID, {
+    const model = pricedModel(quota.model.id, quota.model.providerID, {
       input: 3,
       output: 15,
       cache: { read: 0.3, write: 3.75 },
     });
 
-    expect(combineCosts(0, [quota], [provider("provider", model)])).toEqual({
+    expect(combineCosts(0, [quota], [model])).toEqual({
       cost: 0.0006855,
       mode: "estimated",
     });
@@ -183,20 +174,72 @@ describe("cost estimation", () => {
   test("does not estimate messages with an omitted cost", () => {
     const message = assistant("missing");
     delete (message as { cost?: number }).cost;
-    const model = pricedModel(message.modelID, message.providerID, {
+    const model = pricedModel(message.model.id, message.model.providerID, {
       input: 3,
       output: 15,
       cache: { read: 0.3, write: 3.75 },
     });
 
-    expect(combineCosts(0.25, [message], [provider("provider", model)])).toEqual({
+    expect(combineCosts(0.25, [message], [model])).toEqual({
       cost: 0.25,
       mode: "reported",
     });
   });
+
+  test("uses context tiers only above their threshold", () => {
+    const message = assistant("tiered");
+    const model = pricedModel("model", "provider", {
+      input: 1, output: 1, cache: { read: 1, write: 1 },
+    });
+    model.cost.push({
+      tier: { type: "context", size: 112 },
+      input: 2, output: 2, cache: { read: 2, write: 2 },
+    });
+    expect(estimateCost([message], [model])).toBeCloseTo(0.000137);
+    message.tokens!.input += 1;
+    expect(estimateCost([message], [model])).toBeCloseTo(0.000276);
+  });
+
+  test("skips unfinished assistant messages without tokens", () => {
+    const message = assistant("unfinished");
+    delete message.tokens;
+    const model = pricedModel("model", "provider", {
+      input: 1, output: 1, cache: { read: 1, write: 1 },
+    });
+    expect(estimateCost([message], [model])).toBe(0);
+    expect(computeTotals([message])).toMatchObject({ input: 0, turns: 1 });
+  });
 });
 
 describe("descendant fetching", () => {
+  test("follows message cursors and requests only assistant messages", async () => {
+    const client = clientFor({}, {});
+    const calls: unknown[] = [];
+    client.message.list = async (input) => {
+      calls.push(input);
+      return input.cursor
+        ? { data: [assistant("second")], cursor: {} }
+        : { data: [assistant("first")], cursor: { next: "more" } };
+    };
+    expect(await fetchAssistantMessages(client, "root")).toHaveLength(2);
+    expect(calls).toEqual([
+      { sessionID: "root", type: "assistant", limit: 100, order: "desc" },
+      { sessionID: "root", type: "assistant", limit: 100, cursor: "more" },
+    ]);
+  });
+
+  test("follows child cursors without including unrelated sessions", async () => {
+    const client = clientFor({}, {});
+    client.session.list = async (input) => {
+      if (input?.parentID !== "root") return { data: [], cursor: {} };
+      return input.cursor
+        ? { data: [session("second")], cursor: {} }
+        : { data: [session("first")], cursor: { next: "more" } };
+    };
+    expect((await fetchDescendants(client, "root")).sessions.map((s) => s.id))
+      .toEqual(["first", "second"]);
+  });
+
   test("collects nested descendants once and counts their assistant turns", async () => {
     const child = session("child");
     const grandchild = session("grandchild");
@@ -207,16 +250,17 @@ describe("descendant fetching", () => {
 
     await expect(fetchDescendants(client, "root")).resolves.toEqual({
       sessions: [child, grandchild],
+      messages: [assistant("child-1"), assistant("grandchild-1")],
       turns: 2,
     });
   });
 
   test("fails the refresh when any descendant request fails", async () => {
     const client = clientFor({ root: [session("child")] }, {});
-    const sessionApi = client.session as unknown as {
-      messages: () => Promise<never>;
+    const messageApi = client.message as unknown as {
+      list: () => Promise<never>;
     };
-    sessionApi.messages = async () => {
+    messageApi.list = async () => {
       throw new Error("unavailable");
     };
 
@@ -231,17 +275,113 @@ describe("descendant fetching", () => {
     };
     const client = clientFor(children, {});
     const sessionApi = client.session as unknown as {
-      children: ({ sessionID }: { sessionID: string }) => Promise<{ data: Session[] }>;
+      list: ({ parentID }: { parentID: string }) => Promise<{ data: Session[]; cursor: object }>;
     };
-    sessionApi.children = async ({ sessionID }) => {
+    sessionApi.list = async ({ parentID }) => {
       active += 1;
       peak = Math.max(peak, active);
       await Bun.sleep(5);
       active -= 1;
-      return { data: children[sessionID] ?? [] };
+      return { data: children[parentID] ?? [], cursor: {} };
     };
 
     await fetchDescendants(client, "root");
     expect(peak).toBeLessThanOrEqual(4);
   });
+});
+
+test("V2 plugin renders, switches sessions, retains totals on failure, and cleans up", async () => {
+  expect(plugin.id).toBe("opencode-session-tokens-sidebar");
+  expect(typeof plugin.setup).toBe("function");
+  const client = clientFor({ root: [session("child")] }, {
+    root: [assistant("root-turn")], child: [assistant("child-turn")],
+    other: [assistant("other-turn")],
+  });
+  const handlers = new Map<string, (event: { data: { sessionID: string } }) => void>();
+  const color = RGBA.fromHex("#c6d0f5");
+  const muted = RGBA.fromHex("#949cbb");
+  const accent = RGBA.fromHex("#8caaee");
+  const border = RGBA.fromHex("#51576d");
+  let claim: SlotClaim<"sidebar.content">;
+  let cleanup: (() => void) | undefined;
+  let select: (id: string) => void;
+  let slotRemoved = false;
+  const context = {
+    client,
+    data: {
+      on(type: string, handler: (event: { data: { sessionID: string } }) => void) {
+        handlers.set(type, handler);
+        return () => { handlers.delete(type); };
+      },
+    },
+    ui: {
+      slot(value: SlotClaim<"sidebar.content">) {
+        claim = value;
+        return () => { slotRemoved = true; };
+      },
+    },
+    theme: {
+      text: {
+        base: color, muted,
+        feedback: { info: { base: accent }, warning: { base: color }, error: { base: color } },
+      },
+      border: { base: border },
+    },
+  } as unknown as Context;
+  const view = await testRender(() => {
+    const [selected, setSelected] = createSignal("root");
+    select = setSelected;
+    cleanup = plugin.setup(context) as () => void;
+    return claim.render({ get sessionID() { return selected(); } });
+  }, { width: 60, height: 20 });
+  try {
+    await view.waitForFrame((frame) => frame.includes("2 turns"));
+    expect(view.captureCharFrame()).toContain("Session Token Summary");
+    expect(view.captureCharFrame()).toContain("$2.00");
+    const spans = view.captureSpans().lines.flatMap((line) => line.spans);
+    expect(spans.find((span) => span.text.includes("Session Token Summary"))?.fg.equals(color)).toBe(true);
+    expect(spans.find((span) => span.text.includes("2 turns"))?.fg.equals(muted)).toBe(true);
+    expect(spans.find((span) => span.text.includes("↑ in"))?.fg.equals(muted)).toBe(true);
+    expect(spans.find((span) => span.text.trim() === "100")?.fg.equals(color)).toBe(true);
+    expect(spans.find((span) => span.text.includes("─"))?.fg.equals(border)).toBe(true);
+    const total = spans.find((span) => span.text.trim() === "132");
+    expect(total?.fg.equals(color)).toBe(true);
+    expect((total?.attributes ?? 0) & TextAttributes.BOLD).toBe(TextAttributes.BOLD);
+    expect(spans.find((span) => span.text.includes("$2.00"))?.fg.equals(accent)).toBe(true);
+
+    const quota = assistant("quota");
+    quota.cost = 0;
+    client.message.list = async ({ sessionID }) => ({
+      data: sessionID === "root" ? [quota] : [assistant("other-turn")], cursor: {},
+    });
+    const pricing = Promise.withResolvers<{ data: Model[]; location: { directory: string } }>();
+    let pricingStarted = false;
+    client.model = {
+      list: async () => { pricingStarted = true; return pricing.promise; },
+    } as OpenCodeClient["model"];
+    handlers.get("session.usage.updated")!({ data: { sessionID: "root" } });
+    await Bun.sleep(250);
+    expect(pricingStarted).toBe(true);
+    select!("other");
+    await view.waitForFrame((frame) => frame.includes("1 turn"));
+    expect(view.captureCharFrame()).toContain("$1.00");
+    pricing.resolve({ data: [], location: { directory: "/" } });
+    await view.flush();
+    expect(view.captureCharFrame()).toContain("1 turn");
+    expect(view.captureCharFrame()).not.toContain("2 turns");
+
+    client.session.get = async () => { throw new Error("unavailable"); };
+    handlers.get("session.usage.updated")!({ data: { sessionID: "other" } });
+    await Bun.sleep(250);
+    await view.flush();
+    expect(view.captureCharFrame()).toContain("$1.00");
+    expect(view.captureCharFrame()).not.toContain("unavailable");
+    handlers.get("session.usage.updated")!({ data: { sessionID: "other" } });
+    cleanup!();
+    expect(handlers.size).toBe(0);
+    expect(slotRemoved).toBe(true);
+  } finally {
+    if (!slotRemoved) cleanup?.();
+    await view.dispose();
+  }
 });
