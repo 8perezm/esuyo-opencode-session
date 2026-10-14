@@ -219,7 +219,7 @@ M1, M2 and M3 are implemented; the live TUI check is still outstanding.
 | Open | `onMouseDown` on the `⤺ open session details` row, or palette command `session.usage.page` |
 | Close | inline command bound to `escape,ctrl+c`, in a plugin keymap layer that is disabled unless the page is open; `closePage` reads the return target from the live route |
 | Back target | `returnRoute` captured from `router.current()` at open time, carried in the route data and read back by the page — the host diff viewer's pattern |
-| Page sections | Tokens, Cost, Activity (+ per-tool breakdown), Models, Subagents, Timing |
+| Page sections | Tokens, Cost, Activity (+ per-tool breakdown, + last error), Agents, Models, Subagents, Timing (+ slowest step) |
 
 Deviations from the plan, all deliberate:
 
@@ -262,13 +262,26 @@ Deviations from the plan, all deliberate:
 - **No forced refresh when the sidebar is hidden.** The §7 open question is still open: the page
   renders `state()`, which the sidebar effect populates. If the sidebar is toggled off, the page can
   show a loading or empty state. Left as-is rather than spending a request.
-- **`⤺` (U+293A, Supplemental Arrows-B) is unverified in the user's font.** It is outside the ranges
-  the glyph rule in `session-summary-candidates.md` recommends. If it renders as tofu, swap to `↗`
-  or drop the icon; the row is otherwise plain text.
+- **`⤺` (U+293A, Supplemental Arrows-B) is outside the ranges the glyph rule in
+  `session-summary-candidates.md` recommends.** Kept anyway: it has rendered correctly across every
+  live TUI run so far, with no tofu reported. If it ever breaks on another font, swap to `↗` or drop
+  the icon; the row is otherwise plain text.
+
+### Second round: A4, A6, A9 (same day)
+
+The three Bucket D rows that needed no new data were added to the page only — the sidebar is
+unchanged, because all three are too wide for ~38 columns.
+
+| Row | Source | Notes |
+| --- | --- | --- |
+| `Agents` section | `message.agent` on every assistant step | `agentSplit[]` carries `steps`, `tokens`, `cost` and `busyMs`. `busyMs` is that agent's own `mergedDuration`, so the per-agent figures can exceed the session `→ busy` total when agents overlap — correct, and the reason the section shows absolute time instead of a share. |
+| `→ slowest 1m12s · build` | longest `completed - created` across the family | Running steps are excluded, the same rule as `→ busy`. The agent suffix is clipped to `MAX_AGENT_SUFFIX` (12); the full names are in the `Agents` section. |
+| `× last error 429 too many requests` | newest `message.error` | Chosen by `time.created`, not array position: messages are collected per session and newest-first, so the combined array is not chronological. `describeError` renders `status message`, falling back to `type` when the message is empty, and the value is clipped to `PAGE_VALUE_WIDTH` (43). |
 
 Test coverage added: navigation payload and `returnRoute`, re-opening the page keeping the original
 return target, closing without a `returnRoute` still returning to the session rather than home, the
 close layer being enabled only while the page is open, request counters unchanged across open and
-close, the page's section headers and value column, and the three new splits (`toolSplit`,
-`modelSplit`, `subagentList`) including their sort order. Baseline is now **22 pass / 104
-assertions**.
+close, the page's section headers and value column, the three original splits (`toolSplit`,
+`modelSplit`, `subagentList`) including their sort order, and the new rows: per-agent split with
+per-agent busy time against the merged session total, slowest step with its agent, and the newest
+error picked out of out-of-order messages. Baseline is now **25 pass / 113 assertions**.

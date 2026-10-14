@@ -160,14 +160,19 @@ Note on the host's `$ spent` vs this plugin's `$ cost`: they are **not** the sam
 
 ## 5b. Bucket D — page surface (built 2026-10-14)
 
-The details page exists (see `session-details-page.md`), so rows that were rejected for the ~38-column sidebar now have a home. Already rendered there: per-tool breakdown (A5), model split with steps/tokens, subagent list. Still candidates:
+The details page exists (see `session-details-page.md`), so rows that were rejected for the ~38-column sidebar now have a home. Already rendered there: per-tool breakdown (A5), model split with steps/tokens, subagent list, per-agent split with each agent's busy time (A4), slowest step (A6), last error (A9). Still candidates:
 
 | # | Row | Where it goes |
 | --- | --- | --- |
-| A4 | `◇ build 30 · explore 11` per-agent split | new `Agents` section |
-| A6 | `→ slowest step 1m12s` | `Timing` section |
-| A9 | `× last error: 429 …` | `Activity`, clipped hard |
 | B1 | `≡ files 12 (+431 −92)` | only with a lazy `session.diff` on first open, then cached — never on refresh |
+
+Built as of 2026-10-14, with the wording settled during implementation:
+
+| # | Row | Notes |
+| --- | --- | --- |
+| A4 | `Agents` section, one row per agent: `build 30 steps · 1.2M · 12m` | `message.agent` carries the actor on every step, so the split is exact rather than inferred from session titles. The last field is that agent's own merged step time; because agents run concurrently, the per-agent figures can add up to more than the session `→ busy` total, which is why the section is labelled per-agent and not shown as a share. No `◇` glyph: the other split rows on the page are plain indented names. |
+| A6 | `→ slowest 1m12s · build` in `Timing` | Longest completed step in the whole family, tagged with the agent that ran it. Steps still running are excluded, same as `→ busy`. |
+| A9 | `× last error 429 too many requests` in `Activity` | Newest `message.error` by `time.created`, not by array position: messages are collected per session and newest-first, so the arrays are not chronological. Formatted `status message`, falling back to the error `type`. Clipped to `PAGE_VALUE_WIDTH` (43) so a long provider message cannot widen the row. |
 
 The zero-request rule applies to the page as well: it renders the state the sidebar already fetched, and `test/tui.test.ts` asserts the request counters do not move across open and close.
 
