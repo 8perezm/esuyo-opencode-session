@@ -11,7 +11,20 @@ It is a hard fork of
 by Nick Braun ([@njbraun](https://github.com/njbraun)). See
 [Credit](#credit-and-license).
 
-![The session usage panel in the OpenCode sidebar](image.png)
+```
+Session Token Summary                              ↻ 12 turns
+↑ in                                                1,204,331
+↓ out                                                 398,664
+▤ cache write                                       4,120,000
+▤ cache read                                       48,910,338
+ø cache hit rate                                        97.6%
+✦ think                                                51,887
+─────────────────────────────────────────────────────────────
+Σ total                                            63,942,200
+$ cost                                                 $14.21
+
+▸ Session Summary
+```
 
 ## What you get
 
