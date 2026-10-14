@@ -1,9 +1,11 @@
 import type {
   SessionMessageAssistant,
   SessionMessageInfo,
+  ModelCost,
   ModelInfo,
   OpenCodeClient,
   SessionInfo,
+  TokenUsageInfo,
 } from "@opencode/client";
 
 export type TokenTotals = {
@@ -24,6 +26,48 @@ export type DescendantData = {
 
 export type CostMode = "reported" | "estimated" | "mixed";
 
+export type SessionDetails = {
+  toolCalls: number;
+  toolFailed: number;
+  subagents: number;
+  subagentTokens: number;
+  models: number;
+  topModel: string;
+  topShare: number;
+  savings: number;
+  truncated: number;
+  errored: number;
+  retried: number;
+  files: number;
+  ageMs: number;
+  busyMs: number;
+  avgStepMs: number;
+  modelSplit: ModelSplitEntry[];
+  toolSplit: ToolSplitEntry[];
+  subagentList: SubagentEntry[];
+};
+
+export type ModelSplitEntry = {
+  id: string;
+  providerID: string;
+  steps: number;
+  tokens: number;
+  cost: number;
+};
+
+export type ToolSplitEntry = {
+  name: string;
+  calls: number;
+  failed: number;
+};
+
+export type SubagentEntry = {
+  id: string;
+  title: string;
+  tokens: number;
+  cost: number;
+};
+
 type CostMessage = Pick<
   SessionMessageAssistant,
   "model" | "tokens"
@@ -37,6 +81,27 @@ export const EMPTY: TokenTotals = {
   cacheWrite: 0,
   turns: 0,
   cost: 0,
+};
+
+export const EMPTY_DETAILS: SessionDetails = {
+  toolCalls: 0,
+  toolFailed: 0,
+  subagents: 0,
+  subagentTokens: 0,
+  models: 0,
+  topModel: "",
+  topShare: 0,
+  savings: 0,
+  truncated: 0,
+  errored: 0,
+  retried: 0,
+  files: 0,
+  ageMs: 0,
+  busyMs: 0,
+  avgStepMs: 0,
+  modelSplit: [],
+  toolSplit: [],
+  subagentList: [],
 };
 
 const FETCH_CONCURRENCY = 4;
@@ -69,6 +134,18 @@ function pricingFor(
   );
 }
 
+function pricedEntry(model: ModelInfo, tokens: TokenUsageInfo): ModelCost | undefined {
+  const contextTokens = tokens.input + tokens.cache.read + tokens.cache.write;
+  return (
+    model.cost
+      .filter(
+        (entry) => entry.tier?.type === "context" && contextTokens > entry.tier.size,
+      )
+      .sort((a, b) => (b.tier?.size ?? 0) - (a.tier?.size ?? 0))[0] ??
+    model.cost.find((entry) => !entry.tier)
+  );
+}
+
 export function estimateCost(
   messages: ReadonlyArray<CostMessage>,
   models: ReadonlyArray<ModelInfo>,
@@ -79,14 +156,7 @@ export function estimateCost(
     if (!model || !message.tokens) continue;
 
     const tokens = message.tokens;
-    const contextTokens = tokens.input + tokens.cache.read + tokens.cache.write;
-    const cost =
-      model.cost
-        .filter(
-          (entry) => entry.tier?.type === "context" && contextTokens > entry.tier.size,
-        )
-        .sort((a, b) => (b.tier?.size ?? 0) - (a.tier?.size ?? 0))[0] ??
-      model.cost.find((entry) => !entry.tier);
+    const cost = pricedEntry(model, tokens);
     if (!cost) continue;
 
     total +=
@@ -95,6 +165,30 @@ export function estimateCost(
         tokens.cache.read * cost.cache.read +
         tokens.cache.write * cost.cache.write) /
       1_000_000;
+  }
+  return total;
+}
+
+/**
+ * What the cached prompt tokens would have cost at the uncached input rate,
+ * i.e. the amount the prompt cache saved. Reuses pricing that was already
+ * loaded for cost estimation, so it adds no requests.
+ */
+export function estimateCacheSavings(
+  messages: ReadonlyArray<CostMessage>,
+  models: ReadonlyArray<ModelInfo>,
+): number {
+  let total = 0;
+  for (const message of messages) {
+    if (!message.tokens) continue;
+    const model = pricingFor(models, message.model.providerID, message.model.id);
+    if (!model) continue;
+
+    const cost = pricedEntry(model, message.tokens);
+    if (!cost) continue;
+
+    const delta = cost.input - cost.cache.read;
+    if (delta > 0) total += (delta * message.tokens.cache.read) / 1_000_000;
   }
   return total;
 }
@@ -155,6 +249,126 @@ export function sumSessions(
   }
   t.turns = turns;
   return t;
+}
+
+function tokenSum(tokens: TokenUsageInfo | undefined): number {
+  if (!tokens) return 0;
+  return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write;
+}
+
+type StepInterval = readonly [start: number, end: number];
+
+/**
+ * Wall-clock time the agents were actually working: the union of every
+ * completed step interval. Merging matters because subagents run concurrently,
+ * so summing step durations directly would double-count overlapping work.
+ */
+function mergedDuration(intervals: ReadonlyArray<StepInterval>): number {
+  if (intervals.length === 0) return 0;
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+  let total = 0;
+  let [start, end] = sorted[0]!;
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const [nextStart, nextEnd] = sorted[index]!;
+    if (nextStart <= end) {
+      if (nextEnd > end) end = nextEnd;
+      continue;
+    }
+    total += end - start;
+    start = nextStart;
+    end = nextEnd;
+  }
+
+  return total + (end - start);
+}
+
+/**
+ * Everything the expanded panel shows. Derived in one pass over data the
+ * refresh already fetched, so expanding costs no requests and no extra work
+ * beyond a signal flip.
+ */
+export function computeDetails(
+  root: SessionInfo,
+  descendants: ReadonlyArray<SessionInfo>,
+  messages: ReadonlyArray<SessionMessageAssistant>,
+  models: ReadonlyArray<ModelInfo> | undefined,
+  now: number = Date.now(),
+): SessionDetails {
+  const d: SessionDetails = { ...EMPTY_DETAILS };
+  const modelSteps = new Map<string, ModelSplitEntry>();
+  const toolSteps = new Map<string, ToolSplitEntry>();
+  const files = new Set<string>();
+  const steps: StepInterval[] = [];
+
+  for (const message of messages) {
+    for (const part of message.content ?? []) {
+      if (part.type !== "tool") continue;
+      d.toolCalls += 1;
+      const failed = part.state.status === "error";
+      if (failed) d.toolFailed += 1;
+      const tool = toolSteps.get(part.name) ?? { name: part.name, calls: 0, failed: 0 };
+      tool.calls += 1;
+      if (failed) tool.failed += 1;
+      toolSteps.set(part.name, tool);
+    }
+
+    const modelID = `${message.model.providerID}/${message.model.id}`;
+    const model =
+      modelSteps.get(modelID) ?? {
+        id: message.model.id,
+        providerID: message.model.providerID,
+        steps: 0,
+        tokens: 0,
+        cost: 0,
+      };
+    model.steps += 1;
+    model.tokens += tokenSum(message.tokens);
+    model.cost += message.cost ?? 0;
+    modelSteps.set(modelID, model);
+
+    if (message.finish === "length") d.truncated += 1;
+    if (message.finish === "error" || message.error) d.errored += 1;
+    if (message.retry) d.retried += 1;
+
+    for (const file of message.snapshot?.files ?? []) files.add(file);
+
+    const started = message.time.created;
+    const completed = message.time.completed;
+    if (completed !== undefined && completed >= started) steps.push([started, completed]);
+  }
+
+  d.files = files.size;
+  d.models = modelSteps.size;
+  const top = [...modelSteps.entries()].sort((a, b) => b[1].steps - a[1].steps)[0];
+  if (top) {
+    d.topModel = top[0].slice(top[0].indexOf("/") + 1) || top[0];
+    d.topShare = messages.length > 0 ? Math.round((top[1].steps / messages.length) * 100) : 0;
+  }
+
+  d.modelSplit = [...modelSteps.values()].sort((a, b) => b.tokens - a.tokens || b.steps - a.steps);
+  d.toolSplit = [...toolSteps.values()].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name));
+
+  d.subagents = descendants.length;
+  d.subagentTokens = descendants.reduce((sum, session) => sum + tokenSum(session.tokens), 0);
+  d.subagentList = descendants
+    .map((session) => ({
+      id: session.id,
+      title: session.title ?? "",
+      tokens: tokenSum(session.tokens),
+      cost: session.cost,
+    }))
+    .sort((a, b) => b.tokens - a.tokens);
+
+  d.ageMs = Math.max(0, now - root.time.created);
+  d.busyMs = mergedDuration(steps);
+  d.avgStepMs =
+    steps.length > 0
+      ? Math.round(steps.reduce((sum, [start, end]) => sum + (end - start), 0) / steps.length)
+      : 0;
+
+  d.savings = models && models.length > 0 ? estimateCacheSavings(messages, models) : 0;
+  return d;
 }
 
 export async function mapWithConcurrency<Input, Output>(
