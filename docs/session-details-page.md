@@ -227,6 +227,10 @@ Deviations from the plan, all deliberate:
   zero-cost messages at the *total* level; splitting an estimate across models would imply
   precision that is not there, so a model row shows `steps · tokens` and adds `· $cost` only when a
   real per-step cost exists.
+- **A section heading only renders when at least one of its rows has a value.** `Cost`,
+  `Activity` and `Timing` wrap their spacer, heading and rows in a single `Show`; `Agents`,
+  `Models` and `Subagents` already did. Before this, a session with no recorded cost showed a
+  bare `Cost` heading over an empty gap, and a chat-only session showed a bare `Activity`.
 - **The page drops the `◆ models` headline row** the sidebar shows; the `Models` section replaces it.
   Keeping both read as duplication.
 - **The page is 78 columns wide: `PAGE_LABEL_COLUMN` (34) plus `PAGE_VALUE_COLUMN` (44), the value
@@ -306,4 +310,6 @@ Test coverage added: tool durations with overlapping runs merged, the `ran`-miss
 the no-timestamps case; subagent agent/outcome/span; family depth at 1, 2 and 3 levels; the identity
 fields; retry attempt and newest retry reason; and the page render asserting the identity line, the
 retries row, the family depth, a subagent's outcome, an agent's cost and cache share, and a tool
-duration. Baseline is now **30 pass / 129 assertions**.
+duration. A later test renders a session with no cost and no activity and asserts the `Cost` and
+`Activity` headings are gone while `Tokens` and `Timing` remain. Baseline is now
+**31 pass / 134 assertions**.

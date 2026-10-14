@@ -972,3 +972,77 @@ test("details page renders the breakdown and closes without extra requests", asy
     await bare.dispose();
   }
 });
+
+test("details page hides a section heading when none of its rows have a value", async () => {
+  const root = session("root");
+  root.cost = 0;
+  const turn = assistant("root-turn");
+  turn.cost = 0;
+  const client = {
+    session: {
+      get: async () => root,
+      list: async () => ({ data: [], cursor: {} }),
+    },
+    message: {
+      list: async () => ({ data: [turn], cursor: {} }),
+    },
+    model: {
+      list: async () => ({ data: [], location: { directory: "/" } }),
+    },
+  } as unknown as OpenCodeClient;
+
+  const color = RGBA.fromHex("#c6d0f5");
+  const pages: Array<{ name: string; render: (input: { data?: Record<string, unknown> }) => any }> = [];
+  let claim: SlotClaim<"sidebar.content">;
+  const context = {
+    client,
+    location: { directory: "/" },
+    data: { on: () => () => undefined },
+    ui: {
+      slot(value: SlotClaim<"sidebar.content">) { claim = value; return () => undefined; },
+      router: {
+        register(page: { name: string; render: (input: { data?: Record<string, unknown> }) => unknown }) {
+          pages.push(page);
+          return () => undefined;
+        },
+        navigate: () => undefined,
+        current: () => ({ type: "session", sessionID: "root" }),
+      },
+    },
+    keymap: { layer: () => undefined, mode: { current: () => "base", push: () => () => undefined } },
+    theme: {
+      text: {
+        base: color,
+        muted: color,
+        feedback: { info: { base: color }, warning: { base: color }, error: { base: color } },
+      },
+      border: { base: color },
+    },
+  } as unknown as Context;
+
+  const sidebar = await testRender(() => {
+    plugin.setup(context);
+    return claim.render({ sessionID: "root" });
+  }, { width: 72, height: 20 });
+  try {
+    await sidebar.waitForFrame((frame) => frame.includes("1 turn"));
+    expect(sidebar.captureCharFrame()).not.toContain("$ cost");
+  } finally {
+    await sidebar.dispose();
+  }
+
+  const view = await testRender(() => pages[0]!.render({ data: { sessionID: "root" } }), {
+    width: 90,
+    height: 30,
+  });
+  try {
+    await view.waitForFrame((frame) => frame.includes("Session Details"));
+    const page = view.captureCharFrame();
+    expect(page).not.toContain("Cost");
+    expect(page).not.toContain("Activity");
+    expect(page).toContain("Tokens");
+    expect(page).toContain("↺ initiated");
+  } finally {
+    await view.dispose();
+  }
+});

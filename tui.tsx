@@ -607,76 +607,89 @@ function DetailsPage(props: {
             <PageRow label="ø cache hit rate" value={cacheHitRate()} labelColor={theme.text.muted} valueColor={theme.text.base} />
             <PageRow label="Σ total" value={fmt(totalTokens())} labelColor={theme.text.muted} valueColor={theme.text.base} />
 
-            <box height={1} />
-            <SectionHeader title="Cost" fg={theme.text.base} />
-            <Show when={usage().cost > 0}>
-              <PageRow label={costLabel()} value={fmtCost(usage().cost)} labelColor={theme.text.muted} valueColor={theme.text.base} />
-            </Show>
-            <Show when={d().savings > 0}>
-              <PageRow label="≈ saved" value={fmtCost(d().savings)} labelColor={theme.text.muted} valueColor={theme.text.feedback.info.base} />
+            <Show when={usage().cost > 0 || d().savings > 0}>
+              <box height={1} />
+              <SectionHeader title="Cost" fg={theme.text.base} />
+              <Show when={usage().cost > 0}>
+                <PageRow label={costLabel()} value={fmtCost(usage().cost)} labelColor={theme.text.muted} valueColor={theme.text.base} />
+              </Show>
+              <Show when={d().savings > 0}>
+                <PageRow label="≈ saved" value={fmtCost(d().savings)} labelColor={theme.text.muted} valueColor={theme.text.feedback.info.base} />
+              </Show>
             </Show>
 
-            <box height={1} />
-            <SectionHeader title="Activity" fg={theme.text.base} />
-            <Show when={d().toolCalls > 0}>
-              <PageRow
-                label="▣ tools"
-                value={
-                  d().toolCalls +
-                  (d().toolFailed > 0 ? " · " + d().toolFailed + " failed" : "") +
-                  (d().toolBusyMs > 0 ? " · " + fmtDuration(d().toolBusyMs) : "")
-                }
-                labelColor={theme.text.muted}
-                valueColor={d().toolFailed > 0 ? theme.text.feedback.warning.base : theme.text.base}
-              />
-            </Show>
-            <Show when={d().toolSplit.length > 0}>
-              <SplitRows
-                entries={d().toolSplit.map((tool) => ({
-                  label: tool.name,
-                  value:
-                    tool.calls +
-                    (tool.failed > 0 ? " · " + tool.failed + " failed" : "") +
-                    (tool.durationMs > 0 ? " · " + fmtDuration(tool.durationMs) : ""),
-                }))}
-                labelColor={theme.text.muted}
-                valueColor={theme.text.base}
-              />
-            </Show>
-            <Show when={d().files > 0}>
-              <PageRow label="≡ files" value={fmt(d().files)} labelColor={theme.text.muted} valueColor={theme.text.base} />
-            </Show>
-            <Show when={d().subagents > 0}>
-              <PageRow
-                label="└ subagents"
-                value={family()}
-                labelColor={theme.text.muted}
-                valueColor={theme.text.base}
-              />
-            </Show>
-            <Show when={issues() !== ""}>
-              <PageRow
-                label="× issues"
-                value={issues()}
-                labelColor={theme.text.muted}
-                valueColor={d().errored > 0 ? theme.text.feedback.error.base : theme.text.feedback.warning.base}
-              />
-            </Show>
-            <Show when={d().lastError !== ""}>
-              <PageRow
-                label="× last error"
-                value={clip(d().lastError, PAGE_VALUE_WIDTH)}
-                labelColor={theme.text.muted}
-                valueColor={theme.text.feedback.error.base}
-              />
-            </Show>
-            <Show when={d().retried > 0}>
-              <PageRow
-                label="↻ retries"
-                value={clip(retries(), PAGE_VALUE_WIDTH)}
-                labelColor={theme.text.muted}
-                valueColor={theme.text.feedback.warning.base}
-              />
+            <Show
+              when={
+                d().toolCalls > 0 ||
+                d().files > 0 ||
+                d().subagents > 0 ||
+                issues() !== "" ||
+                d().lastError !== "" ||
+                d().retried > 0
+              }
+            >
+              <box height={1} />
+              <SectionHeader title="Activity" fg={theme.text.base} />
+              <Show when={d().toolCalls > 0}>
+                <PageRow
+                  label="▣ tools"
+                  value={
+                    d().toolCalls +
+                    (d().toolFailed > 0 ? " · " + d().toolFailed + " failed" : "") +
+                    (d().toolBusyMs > 0 ? " · " + fmtDuration(d().toolBusyMs) : "")
+                  }
+                  labelColor={theme.text.muted}
+                  valueColor={d().toolFailed > 0 ? theme.text.feedback.warning.base : theme.text.base}
+                />
+              </Show>
+              <Show when={d().toolSplit.length > 0}>
+                <SplitRows
+                  entries={d().toolSplit.map((tool) => ({
+                    label: tool.name,
+                    value:
+                      tool.calls +
+                      (tool.failed > 0 ? " · " + tool.failed + " failed" : "") +
+                      (tool.durationMs > 0 ? " · " + fmtDuration(tool.durationMs) : ""),
+                  }))}
+                  labelColor={theme.text.muted}
+                  valueColor={theme.text.base}
+                />
+              </Show>
+              <Show when={d().files > 0}>
+                <PageRow label="≡ files" value={fmt(d().files)} labelColor={theme.text.muted} valueColor={theme.text.base} />
+              </Show>
+              <Show when={d().subagents > 0}>
+                <PageRow
+                  label="└ subagents"
+                  value={family()}
+                  labelColor={theme.text.muted}
+                  valueColor={theme.text.base}
+                />
+              </Show>
+              <Show when={issues() !== ""}>
+                <PageRow
+                  label="× issues"
+                  value={issues()}
+                  labelColor={theme.text.muted}
+                  valueColor={d().errored > 0 ? theme.text.feedback.error.base : theme.text.feedback.warning.base}
+                />
+              </Show>
+              <Show when={d().lastError !== ""}>
+                <PageRow
+                  label="× last error"
+                  value={clip(d().lastError, PAGE_VALUE_WIDTH)}
+                  labelColor={theme.text.muted}
+                  valueColor={theme.text.feedback.error.base}
+                />
+              </Show>
+              <Show when={d().retried > 0}>
+                <PageRow
+                  label="↻ retries"
+                  value={clip(retries(), PAGE_VALUE_WIDTH)}
+                  labelColor={theme.text.muted}
+                  valueColor={theme.text.feedback.warning.base}
+                />
+              </Show>
             </Show>
 
             <Show when={d().agentSplit.length > 0}>
@@ -739,29 +752,31 @@ function DetailsPage(props: {
               />
             </Show>
 
-            <box height={1} />
-            <SectionHeader title="Timing" fg={theme.text.base} />
-            <Show when={d().ageMs > 0}>
-              <PageRow label="↺ initiated" value={fmtDuration(d().ageMs)} labelColor={theme.text.muted} valueColor={theme.text.base} />
-            </Show>
-            <Show when={d().busyMs > 0}>
-              <PageRow
-                label="→ busy"
-                value={fmtDuration(d().busyMs) + (d().avgStepMs > 0 ? " · " + fmtDuration(d().avgStepMs) + "/step" : "")}
-                labelColor={theme.text.muted}
-                valueColor={theme.text.base}
-              />
-            </Show>
-            <Show when={d().slowestMs > 0}>
-              <PageRow
-                label="→ slowest"
-                value={
-                  fmtDuration(d().slowestMs) +
-                  (d().slowestAgent ? " · " + clip(d().slowestAgent, MAX_AGENT_SUFFIX) : "")
-                }
-                labelColor={theme.text.muted}
-                valueColor={theme.text.base}
-              />
+            <Show when={d().ageMs > 0 || d().busyMs > 0 || d().slowestMs > 0}>
+              <box height={1} />
+              <SectionHeader title="Timing" fg={theme.text.base} />
+              <Show when={d().ageMs > 0}>
+                <PageRow label="↺ initiated" value={fmtDuration(d().ageMs)} labelColor={theme.text.muted} valueColor={theme.text.base} />
+              </Show>
+              <Show when={d().busyMs > 0}>
+                <PageRow
+                  label="→ busy"
+                  value={fmtDuration(d().busyMs) + (d().avgStepMs > 0 ? " · " + fmtDuration(d().avgStepMs) + "/step" : "")}
+                  labelColor={theme.text.muted}
+                  valueColor={theme.text.base}
+                />
+              </Show>
+              <Show when={d().slowestMs > 0}>
+                <PageRow
+                  label="→ slowest"
+                  value={
+                    fmtDuration(d().slowestMs) +
+                    (d().slowestAgent ? " · " + clip(d().slowestAgent, MAX_AGENT_SUFFIX) : "")
+                  }
+                  labelColor={theme.text.muted}
+                  valueColor={theme.text.base}
+                />
+              </Show>
             </Show>
           </box>
         </Show>

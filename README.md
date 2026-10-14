@@ -248,6 +248,9 @@ Some rows need a word of explanation:
 - The npm package name `opencode-plugin-session-token-summary` belongs to the original
   upstream plugin, not this fork. Installing that name gets you the original panel, and
   installing it alongside this one renders two copies of the block.
+- A section on the details page only appears when it has something to show. A session with
+  no recorded cost has no `Cost` heading, and a session with no tool calls, files,
+  subagents or issues has no `Activity` heading.
 
 ## Troubleshooting
 
