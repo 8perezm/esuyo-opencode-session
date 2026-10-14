@@ -1,81 +1,164 @@
-# OpenCode Session Token Summary
+# Session Token Summary
 
-[![npm version](https://img.shields.io/npm/v/opencode-plugin-session-token-summary)](https://www.npmjs.com/package/opencode-plugin-session-token-summary)
+A session-usage panel for the [OpenCode](https://opencode.ai) terminal. It sits in the
+session sidebar and answers, at a glance, what this session has cost: tokens, money,
+cache behaviour, and how much of the work was done by subagents. Everything it shows
+covers the whole session family — the session you are looking at plus every subagent it
+started.
 
-An OpenCode TUI plugin that adds a compact session-usage panel to the sidebar.
-It aggregates the root session and all nested subagent sessions.
+It is a hard fork of
+[opencode-plugin-session-token-summary](https://github.com/njbraun/opencode-plugin-session-token-summary)
+by Nick Braun ([@njbraun](https://github.com/njbraun)). See
+[Credit](#credit-and-license).
 
-![alt text](image.png)
+![The session usage panel in the OpenCode sidebar](image.png)
 
-## Features
+## What you get
 
-- Compact OpenCode sidebar panel with live session updates
-- Input, output, reasoning, cache read, cache write, and total token counts
-- Cache hit rate (share of prompt tokens served from cache) and assistant turn count
-- Usage aggregated across the root session and every nested subagent
-- Reported API costs for metered providers
-- API-equivalent cost estimates for quota and subscription-backed providers
-- One combined cost total for sessions that mix metered and quota-backed models
-- Clear labels distinguishing reported, estimated, and partially estimated costs
-- V2 model-catalog pricing with context-tier support
-- Expandable **Session Summary** block: tool calls and failures, files touched,
-  subagent split, model split, estimated prompt-cache savings,
-  truncated/errored/retried steps, session age, and agent busy time
+**A token panel in the sidebar** — input, output, reasoning, cache write and cache read
+tokens, the cache hit rate, a total, and the cost. Assistant turns are shown next to the
+title.
 
-## Session Summary block
+**Cost you can trust** — when the provider reports a cost, it is shown as reported. When
+it reports nothing (quota plans, subscription plans, Claude Pro, Copilot), the cost is
+estimated from OpenCode's own model catalog at published API rates, and the label says so:
+`$ cost`, `$ est. cost`, or `$ cost incl. est.` for a session that mixes both.
 
-The token panel itself is always fully rendered. Below the cost line the panel
-adds a second block with its own expanding title, collapsed by default:
+**An expandable `Session Summary` block** — tool calls and failures, files touched,
+subagent split, model split, what the prompt cache saved you, truncated/errored/retried
+steps, session age, and how long the agents were actually busy.
+
+**A full session details page** — one click replaces the main panel with the complete
+breakdown: tokens, cost, activity per tool, per agent, per model and per subagent, the
+slowest step, and the last provider error.
+
+Nothing here costs an extra request. Every number is derived from the session and message
+data the panel already reads, so expanding the block or opening the page is instant.
+
+## Requirements
+
+OpenCode 2 (`>=2.0.28`). This is a terminal plugin, so it is configured in `cli.json`,
+not in `opencode.json`.
+
+For OpenCode 1, use the original upstream plugin instead: this fork does not support the
+V1 terminal API.
+
+## Install
+
+This fork is not published to npm. Install it from this repository.
+
+**From GitHub** — OpenCode accepts a Git package specifier:
+
+```sh
+opencode plugin add github:8perezm/esuyo-opencode-session
+```
+
+Pin a branch or tag if you want a fixed version, for example
+`github:8perezm/esuyo-opencode-session#main`.
+
+**From a local checkout** — useful if you want to edit it or run an unreleased version:
+
+```sh
+git clone https://github.com/8perezm/esuyo-opencode-session.git
+cd esuyo-opencode-session
+npm ci
+```
+
+Then put the checkout **directory** in the `plugins` array of
+`~/.config/opencode/cli.json`, alongside any plugins you already have:
+
+```jsonc title="~/.config/opencode/cli.json"
+{
+  "$schema": "https://opencode.ai/v2/cli.json",
+  "plugins": [
+    "/absolute/path/to/esuyo-opencode-session"
+  ]
+}
+```
+
+Use the directory, not `tui.tsx`: OpenCode 2 resolves the `tui` entrypoint from a
+directory and skips direct-file TUI entries. Restart the TUI if the panel does not appear.
+
+If the sidebar itself is hidden, that is an OpenCode setting, not a plugin one — see
+`session.sidebar` in `cli.json`.
+
+## Using it
+
+### The panel
 
 ```
-Session Token Summary                                   ↻ 12 turns
-↑ in                                                     1,204,331
-…
-Σ total                                                  6,394,220
-$ cost                                                     $14.21
+Session Token Summary                              ↻ 12 turns
+↑ in                                                1,204,331
+↓ out                                                 398,664
+▤ cache write                                       4,120,000
+▤ cache read                                       48,910,338
+ø cache hit rate                                        97.6%
+✦ think                                                51,887
+─────────────────────────────────────────────────────────────
+Σ total                                            63,942,200
+$ cost                                                 $14.21
 
 ▸ Session Summary
 ```
 
-Expand it by clicking the **Session Summary** title, running `/usage`, or
-running the **Toggle session usage details** command (`session.usage.details`)
-from the command palette. Expanded:
+| Row | Meaning |
+| --- | --- |
+| `↻ N turns` | Assistant turns across the session and its subagents |
+| `↑ in` | Prompt tokens sent |
+| `↓ out` | Completion tokens received |
+| `▤ cache write` | Tokens written to the provider's prompt cache |
+| `▤ cache read` | Tokens served from the provider's prompt cache |
+| `ø cache hit rate` | Share of prompt tokens that came from cache: `cache read ÷ (in + cache read + cache write)` |
+| `✦ think` | Reasoning tokens. Only shown when the session used a thinking model |
+| `Σ total` | Sum of all of the above |
+| `$ cost` | Cost reported by the provider, summed over the whole session family |
+| `$ est. cost` | Nothing was reported; the figure is estimated from catalog prices |
+| `$ cost incl. est.` | Some steps were reported, the rest estimated, combined into one total |
+
+Estimated costs are what the same tokens *would* cost at published API rates. If you are
+on a quota or subscription plan you are not necessarily charged that amount.
+
+### The `Session Summary` block
+
+Below the cost line there is a second block, collapsed by default. Open it by clicking
+**`▸ Session Summary`**, by running `/usage`, or by running **Toggle session usage
+details** in the command palette.
 
 ```
 ▾ Session Summary
-▣ tools                                          87 · 3 failed
-≡ files                                                     12
+▣ tools                                         87 · 3 failed
+≡ files                                                    12
 └ subagents                                          1 · 1.2M
-◆ models                             2 · claude-opus-4-6 78%
-≈ saved                                                   $6.10
-× issues                                      1 truncated · 2 retried
-↺ initiated                                        1d02h
-→ busy                                              12m · 17s/step
+◆ models                              2 · claude-opus-4-6 78%
+≈ saved                                                 $6.10
+× issues                              1 truncated · 2 retried
+↺ initiated                                             1d02h
+→ busy                                         12m · 17s/step
 ⤺ open session details
 ```
 
-The block is omitted entirely while every value is zero or unavailable. Every
-detail is derived from the session and message data the panel already fetches,
-so expanding issues no additional requests and costs a single state flip.
-Individual rows are hidden when their data is missing: `≈ saved` needs catalog
-pricing, `→ busy` needs completed step timestamps, and `≡ files` needs message
-snapshots. `↺ initiated` is wall-clock age since the session was created, so it
-keeps growing while the session is idle. `→ busy` is the union of every step
-interval across the session and its subagents, so concurrent subagent work is
-counted once instead of summed. The toggle is per plugin instance and resets
-when the TUI restarts.
+| Row | Meaning |
+| --- | --- |
+| `▣ tools` | Tool calls, with the failed ones called out |
+| `≡ files` | Distinct files the session touched |
+| `└ subagents` | How many subagents ran, and how many tokens they used |
+| `◆ models` | How many models the session used, and the largest share. Only shown when more than one model was involved |
+| `≈ saved` | What the cache reads would have cost uncached, at catalog prices |
+| `× issues` | Steps that were truncated, errored, or retried |
+| `↺ initiated` | Wall-clock age of the session, so it keeps growing while the session is idle |
+| `→ busy` | How long agents were actually working, plus the average per step. Concurrent subagent work is counted once, not summed |
 
-Row glyphs stay inside the Arrows, Box Drawing, Block Elements, Geometric
-Shapes and Math Operators ranges, the same ranges the token rows use. Emoji
-code points such as `⚠` or `⏱` are left out on purpose: terminals draw them from
-an emoji font, which is wider than one cell, ignores the theme colour, and makes
-the row look misaligned next to the rest of the panel.
+Rows appear only when there is something to show, and the whole block is omitted while
+every value is zero or unavailable. `≈ saved` needs catalog pricing, `→ busy` needs
+completed step timestamps, and `≡ files` needs file snapshots from the messages. Whether
+the block is open is one setting shared by every session in the running TUI, and it
+resets when the TUI restarts.
 
-### Session details page
+### The session details page
 
-The link at the bottom of the block, or the **Open session details page** command
-(`session.usage.page`) in the command palette, replaces the main panel with the
-full breakdown for the session. There is deliberately no slash command for it.
+Click **`⤺ open session details`** at the bottom of the block, or run **Open session
+details page** in the command palette. There is deliberately no slash command for it. The
+main panel is replaced by the full breakdown for that session:
 
 ```
  Session Details                                                    ↻ 112 turns
@@ -84,10 +167,15 @@ full breakdown for the session. There is deliberately no slash command for it.
  Tokens
  ↑ in                                                                    626.3K
  ↓ out                                                                   315.2K
+ ✦ think                                                                  51.9K
  ▤ cache read                                                             62.3M
- ▤ cache write                                                                0
- ø cache hit rate                                                         99.0%
- Σ total                                                                  63.2M
+ ▤ cache write                                                             1.2M
+ ø cache hit rate                                                         96.4%
+ Σ total                                                                  64.5M
+
+ Cost
+ $ cost                                                                  $14.21
+ ≈ saved                                                                  $6.10
 
  Activity
  ▣ tools                                                       560 · 112 failed
@@ -97,89 +185,83 @@ full breakdown for the session. There is deliberately no slash command for it.
    shell                                                       112 · 112 failed
    write                                                                    112
  ≡ files                                                                      1
+ └ subagents                                                           1 · 1.2M
+ × issues                                                             1 retried
+ × last error                                             429 too many requests
+
+ Agents
+   build                                               476 steps · 58.1M · 1h40
+   explore                                                84 steps · 6.4M · 12m
 
  Models
    claude-3-7-sonnet-thinking                                   84 steps · 9.5M
-   qwen3.8-flash-next-iq3_s                                     28 steps · 3.2M
+   qwen3.8-flash-next-iq3_s                             28 steps · 3.2M · $4.10
+
+ Subagents
+   explore the auth module                                         1.2M · $0.84
 
  Timing
  ↺ initiated                                                               2h58
  → busy                                                          1h52 · 1m/step
+ → slowest                                                        1m12s · build
 ```
 
-The page is 78 columns wide: a 34-column label column and a 44-column value column that is
-right-aligned, so numbers line up on their last digit and long model IDs are not clipped. `esc`
-or `ctrl+c`, or clicking `esc back`, returns to wherever you came from; the return target travels
-with the route, and if it is missing the page goes back to the session it is showing rather than
-opening a fresh one. The page renders the state the sidebar already fetched, so opening it issues
-no requests — the per-model, per-tool and per-subagent breakdowns are derived in the same pass as
-the sidebar numbers. Each breakdown is capped at eight rows with a `+N more` line, and a model row
-shows a cost only when the API reported one for that step.
+Leave it with `esc`, `ctrl+c`, or by clicking `esc back`. You land back where you came
+from — the same session, never a new one. The page is a fixed 78 columns wide with values
+right-aligned, so numbers line up on their last digit and long model IDs stay readable on
+a wide terminal. Each breakdown is capped at eight rows with a `+N more` line, and a
+model row shows a cost only when the API reported one for those steps.
 
-## Compatibility
+Two rows on the page need a word of explanation:
 
-| OpenCode version | Plugin version | Installation |
-| --- | --- | --- |
-| OpenCode V2 (`opencode`, `>=2.0.28 <3`) | `2.x` | Use the V2 instructions below. |
-| OpenCode V1 | `0.4.1` | Install the pinned legacy package with the V1 instructions below. |
-
-## OpenCode 2 Install
-
-For a local checkout, run `npm ci`, then replace the existing package entry in
-`~/.config/opencode/cli.json` with the checkout directory. Preserve other plugins and settings:
-
-```json
-{
-  "$schema": "https://opencode.ai/v2/cli.json",
-  "plugins": [
-    "/absolute/path/to/opencode-plugin-session-token-summary"
-  ]
-}
-```
-
-Use the directory, not `tui.tsx`: OpenCode V2 resolves the directory's `tui`
-entrypoint and skips direct-file TUI entries. Restart the TUI if it does not reload.
-
-After `2.0.0` is published, you can use `opencode-plugin-session-token-summary@^2`
-instead of the local path. The published `0.4.x` package targets the legacy TUI
-plugin API and cannot be used with OpenCode 2.
-
-## OpenCode V1 Install
-
-OpenCode V1 users must install the final legacy release, `0.4.1`:
-
-1. Press `Ctrl+P` in OpenCode and choose **Install plugin**.
-2. Press `Tab` to install globally.
-3. Enter `opencode-plugin-session-token-summary@0.4.1`.
-
-This creates an entry in `~/.config/opencode/tui.json`. Do not install an
-unversioned package in V1 after `2.0.0` is published, because later releases
-target OpenCode 2.
+- **`Agents`** splits the session by the agent that ran each step, and the last figure is
+  how long that agent was busy. Because subagents run at the same time, those per-agent
+  figures can add up to more than the session's `→ busy` total — that is expected, and it
+  is why the section shows absolute time rather than a share.
+- **`× last error`** is the most recent provider error in the session family, with its
+  status when the provider sent one. Long messages are clipped to the value column.
 
 ## Notes
 
-The panel reads V2 session totals and paginated assistant messages for the
-selected session and its nested descendants. It limits descendant requests to
-four concurrent operations and keeps the last complete snapshot if a background
-refresh fails. It works with the connected server, including remote servers,
-and needs no separate API key.
+- The panel reads session totals and paginated assistant messages for the selected session
+  and its nested descendants, with at most four requests in flight. If a background
+  refresh fails, the last complete numbers stay on screen.
+- It works against the connected server, including a remote one, and needs no API key of
+  its own. It reads the same session data the TUI already has; it sends nothing anywhere.
+- The host sidebar also shows a `$ spent` figure. That one covers the root session only,
+  while `$ cost` here covers the whole session family and includes catalog estimates, so
+  the two are expected to differ.
+- The npm package name `opencode-plugin-session-token-summary` belongs to the original
+  upstream plugin, not this fork. Installing that name gets you the original panel, and
+  installing it alongside this one renders two copies of the block.
 
-Nonzero cost reported by OpenCode is shown as `$ cost`. For messages with an
-explicit zero cost, the plugin uses OpenCode's model
-catalog to calculate what the same tokens would cost at published API rates.
-Fully estimated totals are shown as `$ est. cost`; totals that combine reported
-and estimated amounts are shown as `$ cost incl. est.` Quota or subscription
-users are not necessarily charged the estimated amount. If catalog pricing
-cannot be matched, only the reported cost is shown.
+## Troubleshooting
 
-## Development
+| Symptom | What to do |
+| --- | --- |
+| No panel in the sidebar | Restart the TUI. Check the entry is in `cli.json` (not `opencode.json`) and points at the directory, not `tui.tsx`. Check `session.sidebar` in `cli.json`. |
+| No `ø cache hit rate` row and no `Session Summary` block | You installed the npm name `opencode-plugin-session-token-summary`, which is the upstream original. Point the entry at this repository. |
+| A row is missing | Its data is not available for this session. `≡ files`, `≈ saved` and `→ busy` in particular depend on message snapshots, catalog pricing, and completed step timestamps. |
+| Cost looks wrong | Check the label. `$ est. cost` and `$ cost incl. est.` are catalog estimates, not billed amounts. |
+| A symbol renders as a box | The rows use single-width symbols from the Arrows, Box Drawing, Block Elements and Geometric Shapes ranges. A font without those glyphs will show tofu; the panel itself is unaffected. |
 
-```sh
-npm install
-npm run check
-npm run pack:check
-```
+## Credit and license
 
-## License
+This is a hard fork of
+[opencode-plugin-session-token-summary](https://github.com/njbraun/opencode-plugin-session-token-summary)
+by **Nick Braun** ([@njbraun](https://github.com/njbraun)), who wrote the sidebar panel,
+the cost estimation against OpenCode's model catalog, and the subagent aggregation that
+this project is built on. The original MIT license and his copyright notice are kept
+untouched in [LICENSE](LICENSE).
 
-[MIT](LICENSE)
+What this fork adds on top of upstream `2.0.0`:
+
+- the `ø cache hit rate` row
+- the expandable `Session Summary` block, with per-tool, per-model and per-subagent
+  breakdowns, session age, and busy time that counts concurrent subagent work once
+- the session details page in the main panel, opened from a link or the command palette,
+  with correct back-navigation and no extra requests
+- the page's per-agent split, slowest step, and last provider error
+- [docs](docs) recording which metrics were considered and why some were rejected
+
+MIT, same as the original — see [LICENSE](LICENSE).
