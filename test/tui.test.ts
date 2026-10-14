@@ -95,6 +95,24 @@ function toolCall(id: string, name: string, failed: boolean): AssistantMessage["
       };
 }
 
+function toolRun(
+  id: string,
+  name: string,
+  time: { created: number; ran?: number; completed?: number },
+): AssistantMessage["content"][number] {
+  return {
+    type: "tool",
+    id,
+    name,
+    time,
+    state: {
+      status: "completed",
+      input: {},
+      content: [{ type: "text", text: "ok" }],
+    },
+  };
+}
+
 function clientFor(
   children: Record<string, Session[]>,
   messages: Record<string, AssistantMessage[]>,
@@ -336,9 +354,14 @@ describe("expanded session details", () => {
 
     const details = computeDetails(session("root"), [], [build, explore, second], undefined, 9_000);
 
-    expect(details.agentSplit).toEqual([
-      { name: "build", steps: 2, tokens: 274, cost: 1, busyMs: 4_000 },
-      { name: "explore", steps: 1, tokens: 11, cost: 0.5, busyMs: 3_000 },
+    expect(
+      details.agentSplit.map((agent) => ({
+        ...agent,
+        cacheHit: agent.cacheHit === null ? null : Math.round(agent.cacheHit),
+      })),
+    ).toEqual([
+      { name: "build", steps: 2, tokens: 274, cost: 1, busyMs: 4_000, cacheHit: 9 },
+      { name: "explore", steps: 1, tokens: 11, cost: 0.5, busyMs: 3_000, cacheHit: 0 },
     ]);
     // build's steps overlap explore's, so the session total is smaller than the sum of the parts
     expect(details.busyMs).toBe(5_000);
@@ -378,6 +401,90 @@ describe("expanded session details", () => {
       .toBe("provider_error");
   });
 
+  test("measures how long each tool ran, merging overlapping runs", () => {
+    const message = assistant("tools");
+    message.content = [
+      toolRun("a", "bash", { created: 1_000, ran: 3_000, completed: 6_000 }),
+      toolRun("b", "bash", { created: 4_000, ran: 5_000, completed: 8_000 }),
+      toolRun("c", "edit", { created: 0, ran: 10_000, completed: 14_000 }),
+      // no `ran`: the tool started when the part was created
+      toolRun("d", "edit", { created: 20_000, completed: 21_500 }),
+      // the server left the timestamps out entirely
+      toolCall("e", "grep", false),
+    ];
+
+    const details = computeDetails(session("root"), [], [message], undefined, 0);
+
+    expect(details.toolSplit).toEqual([
+      { name: "bash", calls: 2, failed: 0, durationMs: 5_000 },
+      { name: "edit", calls: 2, failed: 0, durationMs: 5_500 },
+      { name: "grep", calls: 1, failed: 0, durationMs: 0 },
+    ]);
+    // 3s-8s, 10s-14s and 20s-21.5s never overlap, so the total is their sum
+    expect(details.toolBusyMs).toBe(10_500);
+  });
+
+  test("carries each subagent's agent, outcome and wall time", () => {
+    const child = session("child");
+    child.title = "explore the auth module";
+    child.agent = "explore";
+    child.outcome = "succeeded";
+    child.time = { created: 1_000, updated: 61_000 };
+
+    expect(computeDetails(session("root"), [child], [], undefined, 0).subagentList).toEqual([
+      {
+        id: "child",
+        title: "explore the auth module",
+        agent: "explore",
+        outcome: "succeeded",
+        spanMs: 60_000,
+        tokens: 66,
+        cost: 1,
+      },
+    ]);
+  });
+
+  test("counts how deeply the session family nests", () => {
+    const child = session("child");
+    child.parentID = "root";
+    const other = session("other");
+    other.parentID = "root";
+    const grandchild = session("grandchild");
+    grandchild.parentID = "child";
+
+    expect(computeDetails(session("root"), [], [], undefined, 0).familyDepth).toBe(1);
+    expect(computeDetails(session("root"), [child, other], [], undefined, 0).familyDepth).toBe(2);
+    expect(
+      computeDetails(session("root"), [child, other, grandchild], [], undefined, 0).familyDepth,
+    ).toBe(3);
+  });
+
+  test("carries the session identity for the page header", () => {
+    const root = session("root");
+    root.location = { directory: "C:\\repo\\app" };
+    root.outcome = "interrupted";
+    root.fork = { sessionID: "ses_parent", boundary: { type: "through", messageID: "m1" } };
+
+    expect(computeDetails(root, [], [], undefined, 0)).toMatchObject({
+      directory: "C:\\repo\\app",
+      rootOutcome: "interrupted",
+      forkedFrom: "ses_parent",
+    });
+  });
+
+  test("reports the highest retry attempt and the newest retry reason", () => {
+    const first = assistant("first");
+    first.retry = { attempt: 2, at: 1_000, error: { type: "rate_limit", message: "slow down", status: 429 } };
+    const second = assistant("second");
+    second.retry = { attempt: 4, at: 5_000, error: { type: "server_error", message: "overloaded", status: 529 } };
+
+    expect(computeDetails(session("root"), [], [second, first], undefined, 0)).toMatchObject({
+      retried: 2,
+      maxRetryAttempt: 4,
+      lastRetryError: "529 overloaded",
+    });
+  });
+
   test("breaks the session down by tool, model and subagent", () => {
     const heavy = assistant("heavy");
     heavy.model = { id: "gpt-5.2", providerID: "openai" };
@@ -392,15 +499,24 @@ describe("expanded session details", () => {
     const details = computeDetails(session("root"), [child], [heavy, light], undefined, 0);
 
     expect(details.toolSplit).toEqual([
-      { name: "bash", calls: 2, failed: 1 },
-      { name: "edit", calls: 2, failed: 0 },
+      // the fixture tool parts carry no completion time, so no duration is invented for them
+      { name: "bash", calls: 2, failed: 1, durationMs: 0 },
+      { name: "edit", calls: 2, failed: 0, durationMs: 0 },
     ]);
     expect(details.modelSplit.map((model) => [model.id, model.steps, model.tokens])).toEqual([
       ["gpt-5.2", 1, 137],
       ["model", 1, 12],
     ]);
     expect(details.subagentList).toEqual([
-      { id: "child", title: "explore repo", tokens: 66, cost: 1 },
+      {
+        id: "child",
+        title: "explore repo",
+        agent: "",
+        outcome: "",
+        spanMs: 0,
+        tokens: 66,
+        cost: 1,
+      },
     ]);
   });
 
@@ -679,16 +795,30 @@ test("V2 plugin renders, switches sessions, retains totals on failure, and clean
 
 test("details page renders the breakdown and closes without extra requests", async () => {
   const root = session("root");
+  root.location = { directory: "C:\\repo\\app" };
+  root.outcome = "interrupted";
+  root.fork = { sessionID: "ses_parent", boundary: { type: "through", messageID: "m1" } };
   const turn = assistant("root-turn");
-  turn.content = [toolCall("t1", "bash", false), toolCall("t2", "edit", true)];
+  turn.content = [
+    toolRun("t1", "bash", { created: 0, ran: 500, completed: 4_500 }),
+    toolCall("t2", "edit", true),
+  ];
   turn.snapshot = { files: ["tui.tsx", "usage.ts"] };
   turn.time = { created: 0, completed: 2_000 };
   turn.error = { type: "rate_limit", message: "too many requests", status: 429 };
+  turn.retry = { attempt: 3, at: 1_500, error: { type: "server_error", message: "overloaded", status: 529 } };
+  const child = session("child");
+  child.title = "explore the auth module";
+  child.agent = "explore";
+  child.outcome = "succeeded";
+  child.time = { created: 0, updated: 61_000 };
+  const grandchild = session("grandchild");
+  grandchild.parentID = "child";
   const requests = { sessionGet: 0, sessionList: 0, messageList: 0 };
   const client = {
     session: {
       get: async () => { requests.sessionGet += 1; return root; },
-      list: async () => { requests.sessionList += 1; return { data: [session("child")], cursor: {} }; },
+      list: async () => { requests.sessionList += 1; return { data: [child, grandchild], cursor: {} }; },
     },
     message: {
       list: async () => { requests.messageList += 1; return { data: [turn], cursor: {} }; },
@@ -747,7 +877,7 @@ test("details page renders the breakdown and closes without extra requests", asy
     return claim.render({ sessionID: "root" });
   }, { width: 72, height: 20 });
   try {
-    await sidebar.waitForFrame((frame) => frame.includes("2 turns"));
+    await sidebar.waitForFrame((frame) => frame.includes("3 turns"));
   } finally {
     await sidebar.dispose();
   }
@@ -801,9 +931,19 @@ test("details page renders the breakdown and closes without extra requests", asy
     expect(page).toContain("→ slowest");
     expect(page).toContain("× last error");
     expect(page).toContain("429 too many requests");
+    expect(page).toContain("C:\\repo\\app · fork of ses_parent · interrupted");
+    expect(page).toContain("↻ retries");
+    expect(page).toContain("3× max · 529 overloaded");
+    expect(page).toContain("3 levels");
+    expect(page).toContain("explore · succeeded · 1m · 66 · $1.00");
+    expect(page).toContain("ø 8.9%");
+    expect(page).toContain("$1.50");
+
+    const toolsRow = page.split("\n").find((line) => line.includes("▣ tools"))!;
+    expect(toolsRow).toContain("4s");
 
     const inRow = page.split("\n").find((line) => line.includes("↑ in"))!;
-    expect(inRow.indexOf("100")).toBeGreaterThanOrEqual(70);
+    expect(inRow.indexOf("150")).toBeGreaterThanOrEqual(70);
     expect(modes).toEqual([]);
     expect(requests).toEqual(requestsAfterLoad);
     expect(closeLayer().enabled!()).toBe(true);

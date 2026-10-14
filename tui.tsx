@@ -71,6 +71,10 @@ function fmtDuration(ms: number): string {
   return Math.floor(hours / 24) + "d" + String(hours % 24).padStart(2, "0") + "h";
 }
 
+function fmtRate(percent: number): string {
+  return percent.toFixed(1) + "%";
+}
+
 function clip(value: string, max: number): string {
   return value.length <= max ? value : value.slice(0, Math.max(0, max - 1)) + "…";
 }
@@ -472,6 +476,8 @@ const PAGE_CONTENT_WIDTH = PAGE_LABEL_COLUMN + PAGE_VALUE_COLUMN;
 const PAGE_VALUE_WIDTH = PAGE_VALUE_COLUMN - 1;
 /** Agent names on the `→ slowest` row are short; the full split below carries the real names. */
 const MAX_AGENT_SUFFIX = 12;
+/** The fork source id in the header is a reference, not something to read out in full. */
+const MAX_FORK_ID = 20;
 
 /** Page row: label column, then the value right-aligned in its own column. Right alignment keeps the
  *  numbers comparable down the page; the fixed columns keep the pair close enough to read across. */
@@ -533,7 +539,7 @@ function DetailsPage(props: {
   const cacheHitRate = () => {
     const prompt = usage().input + usage().cacheRead + usage().cacheWrite;
     if (prompt === 0) return "—";
-    return `${((usage().cacheRead / prompt) * 100).toFixed(1)}%`;
+    return fmtRate((usage().cacheRead / prompt) * 100);
   };
   const costLabel = () =>
     usage().costMode === "estimated" ? "$ est. cost" : usage().costMode === "mixed" ? "$ cost incl. est." : "$ cost";
@@ -542,6 +548,27 @@ function DetailsPage(props: {
       d().truncated > 0 ? d().truncated + " truncated" : "",
       d().errored > 0 ? d().errored + " errored" : "",
       d().retried > 0 ? d().retried + " retried" : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  const identity = () => {
+    const fork = d().forkedFrom !== "" ? "fork of " + clip(d().forkedFrom, MAX_FORK_ID) : "";
+    const facts = [fork, d().rootOutcome].filter(Boolean);
+    if (d().directory === "") return facts.join(" · ");
+    // The directory is the part that can give way: the fork reference and the outcome are short,
+    // and they are the reason the line exists.
+    const room = PAGE_CONTENT_WIDTH - facts.reduce((sum, fact) => sum + fact.length + 3, 0);
+    return (room >= 8 ? [clip(d().directory, room), ...facts] : facts).join(" · ");
+  };
+  const retries = () =>
+    [d().maxRetryAttempt > 1 ? d().maxRetryAttempt + "× max" : "", d().lastRetryError]
+      .filter(Boolean)
+      .join(" · ");
+  const family = () =>
+    [
+      d().subagents + "",
+      d().subagentTokens > 0 ? fmt(d().subagentTokens) : "",
+      d().familyDepth > 1 ? d().familyDepth + " levels" : "",
     ]
       .filter(Boolean)
       .join(" · ");
@@ -556,6 +583,9 @@ function DetailsPage(props: {
         <text fg={theme.text.muted}>{clip(props.sessionID, 40)}</text>
         <text fg={theme.text.muted}>esc back</text>
       </box>
+      <Show when={identity() !== ""}>
+        <text fg={theme.text.muted}>{clip(identity(), PAGE_CONTENT_WIDTH)}</text>
+      </Show>
       <box height={1} border={["bottom"]} borderColor={theme.border.base} />
       <scrollbox flexGrow={1}>
         <Show when={usage().status === "loading"}>
@@ -591,7 +621,11 @@ function DetailsPage(props: {
             <Show when={d().toolCalls > 0}>
               <PageRow
                 label="▣ tools"
-                value={d().toolCalls + (d().toolFailed > 0 ? " · " + d().toolFailed + " failed" : "")}
+                value={
+                  d().toolCalls +
+                  (d().toolFailed > 0 ? " · " + d().toolFailed + " failed" : "") +
+                  (d().toolBusyMs > 0 ? " · " + fmtDuration(d().toolBusyMs) : "")
+                }
                 labelColor={theme.text.muted}
                 valueColor={d().toolFailed > 0 ? theme.text.feedback.warning.base : theme.text.base}
               />
@@ -600,7 +634,10 @@ function DetailsPage(props: {
               <SplitRows
                 entries={d().toolSplit.map((tool) => ({
                   label: tool.name,
-                  value: tool.calls + (tool.failed > 0 ? " · " + tool.failed + " failed" : ""),
+                  value:
+                    tool.calls +
+                    (tool.failed > 0 ? " · " + tool.failed + " failed" : "") +
+                    (tool.durationMs > 0 ? " · " + fmtDuration(tool.durationMs) : ""),
                 }))}
                 labelColor={theme.text.muted}
                 valueColor={theme.text.base}
@@ -612,7 +649,7 @@ function DetailsPage(props: {
             <Show when={d().subagents > 0}>
               <PageRow
                 label="└ subagents"
-                value={d().subagents + (d().subagentTokens > 0 ? " · " + fmt(d().subagentTokens) : "")}
+                value={family()}
                 labelColor={theme.text.muted}
                 valueColor={theme.text.base}
               />
@@ -633,6 +670,14 @@ function DetailsPage(props: {
                 valueColor={theme.text.feedback.error.base}
               />
             </Show>
+            <Show when={d().retried > 0}>
+              <PageRow
+                label="↻ retries"
+                value={clip(retries(), PAGE_VALUE_WIDTH)}
+                labelColor={theme.text.muted}
+                valueColor={theme.text.feedback.warning.base}
+              />
+            </Show>
 
             <Show when={d().agentSplit.length > 0}>
               <box height={1} />
@@ -644,7 +689,9 @@ function DetailsPage(props: {
                     agent.steps +
                     " steps · " +
                     fmt(agent.tokens) +
-                    (agent.busyMs > 0 ? " · " + fmtDuration(agent.busyMs) : ""),
+                    (agent.busyMs > 0 ? " · " + fmtDuration(agent.busyMs) : "") +
+                    (agent.cost > 0 ? " · " + fmtCost(agent.cost) : "") +
+                    (agent.cacheHit !== null ? " · ø " + fmtRate(agent.cacheHit) : ""),
                 }))}
                 labelColor={theme.text.muted}
                 valueColor={theme.text.base}
@@ -674,7 +721,18 @@ function DetailsPage(props: {
               <SplitRows
                 entries={d().subagentList.map((subagent) => ({
                   label: clip(subagent.title || subagent.id, PAGE_LABEL_WIDTH),
-                  value: fmt(subagent.tokens) + (subagent.cost > 0 ? " · " + fmtCost(subagent.cost) : ""),
+                  value: clip(
+                    [
+                      subagent.agent,
+                      subagent.outcome,
+                      subagent.spanMs > 0 ? fmtDuration(subagent.spanMs) : "",
+                      fmt(subagent.tokens),
+                      subagent.cost > 0 ? fmtCost(subagent.cost) : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · "),
+                    PAGE_VALUE_WIDTH,
+                  ),
                 }))}
                 labelColor={theme.text.muted}
                 valueColor={theme.text.base}
