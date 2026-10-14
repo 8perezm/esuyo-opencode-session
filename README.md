@@ -46,9 +46,14 @@ V1 terminal API.
 
 ## Install
 
-This fork is not published to npm. Install it from this repository.
+**From npm** — this fork is published as `@esuyo/esuyo-opencode-session`:
 
-**From GitHub** — OpenCode accepts a Git package specifier:
+```sh
+opencode plugin add @esuyo/esuyo-opencode-session
+```
+
+**From GitHub** — OpenCode also accepts a Git package specifier, which is how you run
+changes that are not in a release yet:
 
 ```sh
 opencode plugin add github:8perezm/esuyo-opencode-session
@@ -56,6 +61,10 @@ opencode plugin add github:8perezm/esuyo-opencode-session
 
 Pin a branch or tag if you want a fixed version, for example
 `github:8perezm/esuyo-opencode-session#main`.
+
+Do not install the unscoped `opencode-plugin-session-token-summary`: that is the
+[upstream original](https://github.com/njbraun/opencode-plugin-session-token-summary),
+which this project is a fork of. Having both installed renders two copies of the block.
 
 **From a local checkout** — useful if you want to edit it or run an unreleased version:
 
@@ -245,9 +254,10 @@ Some rows need a word of explanation:
 - The host sidebar also shows a `$ spent` figure. That one covers the root session only,
   while `$ cost` here covers the whole session family and includes catalog estimates, so
   the two are expected to differ.
-- The npm package name `opencode-plugin-session-token-summary` belongs to the original
-  upstream plugin, not this fork. Installing that name gets you the original panel, and
-  installing it alongside this one renders two copies of the block.
+- This fork publishes to npm as `@esuyo/esuyo-opencode-session`. The unscoped
+  `opencode-plugin-session-token-summary` is the upstream original: installing that name
+  gets you the original panel, and installing it alongside this one renders two copies of
+  the block.
 - A section on the details page only appears when it has something to show. A session with
   no recorded cost has no `Cost` heading, and a session with no tool calls, files,
   subagents or issues has no `Activity` heading.
@@ -257,7 +267,7 @@ Some rows need a word of explanation:
 | Symptom | What to do |
 | --- | --- |
 | No panel in the sidebar | Restart the TUI. Check the entry is in `cli.json` (not `opencode.json`) and points at the directory, not `tui.tsx`. Check `session.sidebar` in `cli.json`. |
-| No `ø cache hit rate` row and no `Session Summary` block | You installed the npm name `opencode-plugin-session-token-summary`, which is the upstream original. Point the entry at this repository. |
+| No `ø cache hit rate` row and no `Session Summary` block | You installed the unscoped npm name `opencode-plugin-session-token-summary`, which is the upstream original. Use `@esuyo/esuyo-opencode-session`, or point the entry at this repository. |
 | A row is missing | Its data is not available for this session. `≡ files`, `≈ saved`, `→ busy` and the tool durations in particular depend on message snapshots, catalog pricing, completed step timestamps, and completed tool timestamps. |
 | Cost looks wrong | Check the label. `$ est. cost` and `$ cost incl. est.` are catalog estimates, not billed amounts. |
 | A symbol renders as a box | The rows use single-width symbols from the Latin-1 Supplement, Arrows, Box Drawing, Block Elements and Geometric Shapes ranges. A font without those glyphs will show tofu; the panel itself is unaffected. |

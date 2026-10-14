@@ -1,15 +1,19 @@
 {
-  "name": "opencode-plugin-session-token-summary",
+  "name": "@esuyo/esuyo-opencode-session",
   "version": "2.0.0",
   "description": "OpenCode TUI sidebar showing token usage across a session and its subagents.",
   "license": "MIT",
+  "author": "Nick Braun",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/njbraun/opencode-plugin-session-token-summary.git"
+    "url": "git+https://github.com/8perezm/esuyo-opencode-session.git"
   },
-  "homepage": "https://github.com/njbraun/opencode-plugin-session-token-summary#readme",
+  "homepage": "https://github.com/8perezm/esuyo-opencode-session#readme",
   "bugs": {
-    "url": "https://github.com/njbraun/opencode-plugin-session-token-summary/issues"
+    "url": "https://github.com/8perezm/esuyo-opencode-session/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "opencode",
