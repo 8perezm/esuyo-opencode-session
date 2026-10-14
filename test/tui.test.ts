@@ -322,6 +322,62 @@ describe("expanded session details", () => {
       });
   });
 
+  test("splits the session across agents with each agent's own busy time", () => {
+    const build = assistant("build-step");
+    build.agent = "build";
+    build.time = { created: 0, completed: 2_000 };
+    const explore = assistant("explore-step");
+    explore.agent = "explore";
+    explore.tokens = { input: 10, output: 1, reasoning: 0, cache: { read: 0, write: 0 } };
+    explore.time = { created: 1_000, completed: 4_000 };
+    const second = assistant("build-step-2");
+    second.agent = "build";
+    second.time = { created: 3_000, completed: 5_000 };
+
+    const details = computeDetails(session("root"), [], [build, explore, second], undefined, 9_000);
+
+    expect(details.agentSplit).toEqual([
+      { name: "build", steps: 2, tokens: 274, cost: 1, busyMs: 4_000 },
+      { name: "explore", steps: 1, tokens: 11, cost: 0.5, busyMs: 3_000 },
+    ]);
+    // build's steps overlap explore's, so the session total is smaller than the sum of the parts
+    expect(details.busyMs).toBe(5_000);
+  });
+
+  test("reports the slowest step and the agent that ran it", () => {
+    const quick = assistant("quick");
+    quick.agent = "explore";
+    quick.time = { created: 0, completed: 1_000 };
+    const slow = assistant("slow");
+    slow.agent = "build";
+    slow.time = { created: 1_000, completed: 72_000 };
+    const running = assistant("running");
+    running.agent = "build";
+    running.time = { created: 72_000 };
+
+    expect(computeDetails(session("root"), [], [quick, slow, running], undefined, 90_000)).toMatchObject({
+      slowestMs: 71_000,
+      slowestAgent: "build",
+    });
+  });
+
+  test("reports the newest error with its status, even out of order", () => {
+    const early = assistant("early");
+    early.time = { created: 1_000 };
+    early.error = { type: "provider_error", message: "overloaded", status: 529 };
+    const late = assistant("late");
+    late.time = { created: 9_000 };
+    late.error = { type: "rate_limit", message: " too many requests ", status: 429 };
+
+    expect(computeDetails(session("root"), [], [late, early], undefined, 10_000).lastError)
+      .toBe("429 too many requests");
+
+    const noMessage = assistant("no-message");
+    noMessage.error = { type: "provider_error", message: "" };
+    expect(computeDetails(session("root"), [], [noMessage], undefined, 0).lastError)
+      .toBe("provider_error");
+  });
+
   test("breaks the session down by tool, model and subagent", () => {
     const heavy = assistant("heavy");
     heavy.model = { id: "gpt-5.2", providerID: "openai" };
@@ -627,6 +683,7 @@ test("details page renders the breakdown and closes without extra requests", asy
   turn.content = [toolCall("t1", "bash", false), toolCall("t2", "edit", true)];
   turn.snapshot = { files: ["tui.tsx", "usage.ts"] };
   turn.time = { created: 0, completed: 2_000 };
+  turn.error = { type: "rate_limit", message: "too many requests", status: 429 };
   const requests = { sessionGet: 0, sessionList: 0, messageList: 0 };
   const client = {
     session: {
@@ -722,7 +779,7 @@ test("details page renders the breakdown and closes without extra requests", asy
   expect(requests).toEqual(requestsAfterLoad);
 
   const pageRoute = navigations[1] as { data: Record<string, unknown> };
-  const view = await testRender(() => pages[0]!.render({ data: pageRoute.data }), { width: 90, height: 34 });
+  const view = await testRender(() => pages[0]!.render({ data: pageRoute.data }), { width: 90, height: 44 });
   try {
     await view.waitForFrame((frame) => frame.includes("Session Details"));
     const page = view.captureCharFrame();
@@ -738,8 +795,12 @@ test("details page renders the breakdown and closes without extra requests", asy
     expect(page).toContain("└ subagents");
     expect(page).toContain("Models");
     expect(page).toContain("Subagents");
+    expect(page).toContain("Agents");
     expect(page).toContain("bash");
     expect(page).toContain("steps ·");
+    expect(page).toContain("→ slowest");
+    expect(page).toContain("× last error");
+    expect(page).toContain("429 too many requests");
 
     const inRow = page.split("\n").find((line) => line.includes("↑ in"))!;
     expect(inRow.indexOf("100")).toBeGreaterThanOrEqual(70);
@@ -760,7 +821,7 @@ test("details page renders the breakdown and closes without extra requests", asy
   context.ui.router.navigate({ type: "plugin", name: "session-usage-details", data: { sessionID: "root" } });
   const bare = await testRender(() => pages[0]!.render({ data: { sessionID: "root" } }), {
     width: 90,
-    height: 34,
+    height: 44,
   });
   try {
     await bare.waitForFrame((frame) => frame.includes("Session Details"));

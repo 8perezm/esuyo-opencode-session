@@ -5,6 +5,7 @@ import type {
   ModelInfo,
   OpenCodeClient,
   SessionInfo,
+  SessionStructuredError,
   TokenUsageInfo,
 } from "@opencode/client";
 
@@ -42,9 +43,13 @@ export type SessionDetails = {
   ageMs: number;
   busyMs: number;
   avgStepMs: number;
+  slowestMs: number;
+  slowestAgent: string;
+  lastError: string;
   modelSplit: ModelSplitEntry[];
   toolSplit: ToolSplitEntry[];
   subagentList: SubagentEntry[];
+  agentSplit: AgentSplitEntry[];
 };
 
 export type ModelSplitEntry = {
@@ -66,6 +71,16 @@ export type SubagentEntry = {
   title: string;
   tokens: number;
   cost: number;
+};
+
+/** One agent's share of the session. `busyMs` is that agent's own merged step time, so the
+ *  per-agent figures can add up to more than the session total when agents ran at the same time. */
+export type AgentSplitEntry = {
+  name: string;
+  steps: number;
+  tokens: number;
+  cost: number;
+  busyMs: number;
 };
 
 type CostMessage = Pick<
@@ -99,9 +114,13 @@ export const EMPTY_DETAILS: SessionDetails = {
   ageMs: 0,
   busyMs: 0,
   avgStepMs: 0,
+  slowestMs: 0,
+  slowestAgent: "",
+  lastError: "",
   modelSplit: [],
   toolSplit: [],
   subagentList: [],
+  agentSplit: [],
 };
 
 const FETCH_CONCURRENCY = 4;
@@ -288,6 +307,17 @@ function mergedDuration(intervals: ReadonlyArray<StepInterval>): number {
  * refresh already fetched, so expanding costs no requests and no extra work
  * beyond a signal flip.
  */
+/** Provider errors carry a message and usually a status; the status is what identifies the failure. */
+function describeError(error: SessionStructuredError): string {
+  const text = error.message?.trim() || error.type || "Provider error";
+  return error.status === undefined ? text : `${error.status} ${text}`;
+}
+
+/**
+ * Everything the expanded panel shows. Derived in one pass over data the
+ * refresh already fetched, so expanding costs no requests and no extra work
+ * beyond a signal flip.
+ */
 export function computeDetails(
   root: SessionInfo,
   descendants: ReadonlyArray<SessionInfo>,
@@ -298,8 +328,13 @@ export function computeDetails(
   const d: SessionDetails = { ...EMPTY_DETAILS };
   const modelSteps = new Map<string, ModelSplitEntry>();
   const toolSteps = new Map<string, ToolSplitEntry>();
+  const agentSteps = new Map<string, AgentSplitEntry>();
+  const agentIntervals = new Map<string, StepInterval[]>();
   const files = new Set<string>();
   const steps: StepInterval[] = [];
+  let slowestMs = 0;
+  let slowestAgent = "";
+  let lastErrorAt = -1;
 
   for (const message of messages) {
     for (const part of message.content ?? []) {
@@ -312,6 +347,14 @@ export function computeDetails(
       if (failed) tool.failed += 1;
       toolSteps.set(part.name, tool);
     }
+
+    const agent = message.agent || "unknown";
+    const agentEntry =
+      agentSteps.get(agent) ?? { name: agent, steps: 0, tokens: 0, cost: 0, busyMs: 0 };
+    agentEntry.steps += 1;
+    agentEntry.tokens += tokenSum(message.tokens);
+    agentEntry.cost += message.cost ?? 0;
+    agentSteps.set(agent, agentEntry);
 
     const modelID = `${message.model.providerID}/${message.model.id}`;
     const model =
@@ -330,12 +373,27 @@ export function computeDetails(
     if (message.finish === "length") d.truncated += 1;
     if (message.finish === "error" || message.error) d.errored += 1;
     if (message.retry) d.retried += 1;
+    // Messages arrive per session and newest-first, so the newest error is found by timestamp
+    // rather than by position in the array.
+    if (message.error && message.time.created >= lastErrorAt) {
+      lastErrorAt = message.time.created;
+      d.lastError = describeError(message.error);
+    }
 
     for (const file of message.snapshot?.files ?? []) files.add(file);
 
     const started = message.time.created;
     const completed = message.time.completed;
-    if (completed !== undefined && completed >= started) steps.push([started, completed]);
+    if (completed !== undefined && completed >= started) {
+      steps.push([started, completed]);
+      const agentStep = agentIntervals.get(agent) ?? [];
+      agentStep.push([started, completed]);
+      agentIntervals.set(agent, agentStep);
+      if (completed - started > slowestMs) {
+        slowestMs = completed - started;
+        slowestAgent = agent;
+      }
+    }
   }
 
   d.files = files.size;
@@ -360,8 +418,14 @@ export function computeDetails(
     }))
     .sort((a, b) => b.tokens - a.tokens);
 
+  d.agentSplit = [...agentSteps.values()]
+    .map((entry) => ({ ...entry, busyMs: mergedDuration(agentIntervals.get(entry.name) ?? []) }))
+    .sort((a, b) => b.tokens - a.tokens || b.steps - a.steps);
+
   d.ageMs = Math.max(0, now - root.time.created);
   d.busyMs = mergedDuration(steps);
+  d.slowestMs = slowestMs;
+  d.slowestAgent = slowestAgent;
   d.avgStepMs =
     steps.length > 0
       ? Math.round(steps.reduce((sum, [start, end]) => sum + (end - start), 0) / steps.length)

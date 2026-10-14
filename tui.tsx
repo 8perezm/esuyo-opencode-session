@@ -468,6 +468,10 @@ const PAGE_LABEL_WIDTH = 31;
 const PAGE_LABEL_COLUMN = 34;
 const PAGE_VALUE_COLUMN = 44;
 const PAGE_CONTENT_WIDTH = PAGE_LABEL_COLUMN + PAGE_VALUE_COLUMN;
+/** Values are clipped to the value column so a long provider error cannot push the row wider. */
+const PAGE_VALUE_WIDTH = PAGE_VALUE_COLUMN - 1;
+/** Agent names on the `→ slowest` row are short; the full split below carries the real names. */
+const MAX_AGENT_SUFFIX = 12;
 
 /** Page row: label column, then the value right-aligned in its own column. Right alignment keeps the
  *  numbers comparable down the page; the fixed columns keep the pair close enough to read across. */
@@ -621,6 +625,31 @@ function DetailsPage(props: {
                 valueColor={d().errored > 0 ? theme.text.feedback.error.base : theme.text.feedback.warning.base}
               />
             </Show>
+            <Show when={d().lastError !== ""}>
+              <PageRow
+                label="× last error"
+                value={clip(d().lastError, PAGE_VALUE_WIDTH)}
+                labelColor={theme.text.muted}
+                valueColor={theme.text.feedback.error.base}
+              />
+            </Show>
+
+            <Show when={d().agentSplit.length > 0}>
+              <box height={1} />
+              <SectionHeader title="Agents" fg={theme.text.base} />
+              <SplitRows
+                entries={d().agentSplit.map((agent) => ({
+                  label: clip(agent.name, PAGE_LABEL_WIDTH),
+                  value:
+                    agent.steps +
+                    " steps · " +
+                    fmt(agent.tokens) +
+                    (agent.busyMs > 0 ? " · " + fmtDuration(agent.busyMs) : ""),
+                }))}
+                labelColor={theme.text.muted}
+                valueColor={theme.text.base}
+              />
+            </Show>
 
             <Show when={d().modelSplit.length > 0}>
               <box height={1} />
@@ -661,6 +690,17 @@ function DetailsPage(props: {
               <PageRow
                 label="→ busy"
                 value={fmtDuration(d().busyMs) + (d().avgStepMs > 0 ? " · " + fmtDuration(d().avgStepMs) + "/step" : "")}
+                labelColor={theme.text.muted}
+                valueColor={theme.text.base}
+              />
+            </Show>
+            <Show when={d().slowestMs > 0}>
+              <PageRow
+                label="→ slowest"
+                value={
+                  fmtDuration(d().slowestMs) +
+                  (d().slowestAgent ? " · " + clip(d().slowestAgent, MAX_AGENT_SUFFIX) : "")
+                }
                 labelColor={theme.text.muted}
                 valueColor={theme.text.base}
               />
