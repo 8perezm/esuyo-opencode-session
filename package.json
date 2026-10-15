@@ -1,6 +1,6 @@
 {
   "name": "@esuyo/esuyo-opencode-session",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "OpenCode TUI sidebar showing token usage across a session and its subagents.",
   "license": "MIT",
   "author": "Nick Braun",
