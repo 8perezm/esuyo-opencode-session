@@ -272,7 +272,7 @@ export default Plugin.define({
         };
 
         return (
-          <Show when={state().status !== "ready" || state().turns > 0 || totalTokens() > 0 || state().cost > 0}>
+          <Show when={state().status === "loading" || (state().status === "ready" && (state().turns > 0 || totalTokens() > 0 || state().cost > 0))}>
             <box gap={0}>
               <box flexDirection="row" justifyContent="space-between">
                 <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Session Token Summary</text>
@@ -280,9 +280,6 @@ export default Plugin.define({
               </box>
               <Show when={state().status === "loading"}>
                 <text fg={context.theme.text.muted}>Loading…</text>
-              </Show>
-              <Show when={state().status === "error"}>
-                <text fg={context.theme.text.feedback.error.base}>{state().error || "Unknown error"}</text>
               </Show>
               <Show when={state().status === "ready"}>
                 <box gap={0}>
