@@ -20,6 +20,26 @@ import {
   fetchDescendants,
   sumSessions,
 } from "../usage";
+import {
+  activeDurationMs,
+  createTrackerState,
+  dropSession,
+  estimateStreamTokens,
+  formatGap,
+  formatRate,
+  formatTtft,
+  handleStepEnded,
+  handleStepFailed,
+  handleStepStarted,
+  handleTextDelta,
+  handleToolCalled,
+  lastGap,
+  liveTps,
+  pruneSamples,
+  sessionAverageRate,
+  sessionTtft,
+  statusTextFor,
+} from "../tps";
 
 function assistant(id: string): AssistantMessage {
   return {
@@ -614,7 +634,7 @@ describe("descendant fetching", () => {
 });
 
 test("V2 plugin renders, switches sessions, retains totals on failure, and cleans up", async () => {
-  expect(plugin.id).toBe("opencode-session-tokens-sidebar");
+  expect(plugin.id).toBe("esuyo-opencode-session");
   expect(typeof plugin.setup).toBe("function");
   const rootTurn = assistant("root-turn");
   rootTurn.content = [toolCall("t1", "bash", false), toolCall("t2", "edit", true)];
@@ -648,6 +668,7 @@ test("V2 plugin renders, switches sessions, retains totals on failure, and clean
   let cleanup: (() => void) | undefined;
   let select: (id: string) => void;
   let slotRemoved = false;
+  let footerRemoved = false;
   const context = {
     client,
     data: {
@@ -657,7 +678,10 @@ test("V2 plugin renders, switches sessions, retains totals on failure, and clean
       },
     },
     ui: {
-      slot(value: SlotClaim<"sidebar.content">) {
+      slot(value: SlotClaim<"sidebar.content"> & { append?: string }) {
+        if ((value as { append?: string }).append === "prompt.footer.status") {
+          return () => { footerRemoved = true; };
+        }
         claim = value;
         return () => { slotRemoved = true; };
       },
@@ -786,6 +810,7 @@ test("V2 plugin renders, switches sessions, retains totals on failure, and clean
     cleanup!();
     expect(handlers.size).toBe(0);
     expect(slotRemoved).toBe(true);
+    expect(footerRemoved).toBe(true);
     expect(pageRemoved).toBe(true);
   } finally {
     if (!slotRemoved) cleanup?.();
@@ -846,7 +871,11 @@ test("details page renders the breakdown and closes without extra requests", asy
     location: { directory: "/" },
     data: { on: () => () => undefined },
     ui: {
-      slot(value: SlotClaim<"sidebar.content">) { claim = value; return () => undefined; },
+      slot(value: SlotClaim<"sidebar.content"> & { append?: string }) {
+        if ((value as { append?: string }).append === "prompt.footer.status") return () => undefined;
+        claim = value;
+        return () => undefined;
+      },
       router: {
         register(page: { name: string; render: (input: { data?: Record<string, unknown> }) => unknown }) {
           pages.push(page);
@@ -999,7 +1028,11 @@ test("details page hides a section heading when none of its rows have a value", 
     location: { directory: "/" },
     data: { on: () => () => undefined },
     ui: {
-      slot(value: SlotClaim<"sidebar.content">) { claim = value; return () => undefined; },
+      slot(value: SlotClaim<"sidebar.content"> & { append?: string }) {
+        if ((value as { append?: string }).append === "prompt.footer.status") return () => undefined;
+        claim = value;
+        return () => undefined;
+      },
       router: {
         register(page: { name: string; render: (input: { data?: Record<string, unknown> }) => unknown }) {
           pages.push(page);
@@ -1045,4 +1078,346 @@ test("details page hides a section heading when none of its rows have a value", 
   } finally {
     await view.dispose();
   }
+});
+
+test("clicking esc back navigates back without extra requests", async () => {
+  const root = session("root");
+  const turn = assistant("root-turn");
+  const requests = { sessionGet: 0, messageList: 0 };
+  const client = {
+    session: {
+      get: async () => { requests.sessionGet += 1; return root; },
+      list: async () => ({ data: [], cursor: {} }),
+    },
+    message: {
+      list: async () => { requests.messageList += 1; return { data: [turn], cursor: {} }; },
+    },
+  } as unknown as OpenCodeClient;
+
+  const color = RGBA.fromHex("#c6d0f5");
+  const pages: Array<{ name: string; render: (input: { data?: Record<string, unknown> }) => unknown }> = [];
+  const navigations: unknown[] = [];
+  let route: unknown = {
+    type: "plugin",
+    name: "session-usage-details",
+    data: { sessionID: "root", returnRoute: { type: "session", sessionID: "root" } },
+  };
+  const context = {
+    client,
+    location: { directory: "/" },
+    data: { on: () => () => undefined },
+    ui: {
+      slot: () => () => undefined,
+      router: {
+        register(page: { name: string; render: (input: { data?: Record<string, unknown> }) => unknown }) {
+          pages.push(page);
+          return () => undefined;
+        },
+        navigate(destination: unknown) {
+          navigations.push(destination);
+          route = destination;
+        },
+        current() { return route; },
+      },
+    },
+    keymap: { layer: () => undefined, mode: { current: () => "base", push: () => () => undefined } },
+    theme: {
+      text: {
+        base: color,
+        muted: color,
+        feedback: { info: { base: color }, warning: { base: color }, error: { base: color } },
+      },
+      border: { base: color },
+    },
+  } as unknown as Context;
+
+  const cleanup = plugin.setup(context) as () => void;
+  try {
+    const view = await testRender(
+      () => pages[0]!.render({ data: (route as { data: Record<string, unknown> }).data }) as never,
+      { width: 90, height: 30 },
+    );
+    try {
+      await view.waitForFrame((frame) => frame.includes("esc back"));
+      const lines = view.captureCharFrame().split("\n");
+      let clicked = false;
+      for (let y = 0; y < lines.length && !clicked; y++) {
+        const x = lines[y]!.indexOf("esc back");
+        if (x >= 0) {
+          // mockMouse takes 0-based cell coordinates.
+          await view.mockMouse.click(x, y);
+          clicked = true;
+        }
+      }
+      expect(clicked).toBe(true);
+      await view.flush();
+      expect(navigations).toEqual([{ type: "session", sessionID: "root" }]);
+      expect(requests).toEqual({ sessionGet: 0, messageList: 0 });
+    } finally {
+      await view.dispose();
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+describe("throughput tracker", () => {
+  test("formats rates, TTFT, and GAP like the footer", () => {
+    expect(formatRate(NaN)).toBeUndefined();
+    expect(formatRate(0)).toBeUndefined();
+    expect(formatRate(9.876)).toBe("9.88");
+    expect(formatRate(62.44)).toBe("62.4");
+    expect(formatRate(123.4)).toBe("123");
+    expect(formatTtft(NaN)).toBeUndefined();
+    expect(formatTtft(0.86)).toBe("0.9s");
+    expect(formatGap(12_300)).toBe("12s");
+    expect(formatGap(1_500)).toBe("1.5s");
+    expect(estimateStreamTokens("hello world")).toBeGreaterThan(0);
+  });
+
+  test("measures active streaming duration across samples", () => {
+    expect(activeDurationMs([])).toBe(0);
+    expect(activeDurationMs([{ at: 1_000, tokens: 3 }])).toBe(1_000);
+    expect(
+      activeDurationMs([{ at: 1_000, tokens: 1 }, { at: 1_500, tokens: 1 }], 2_000),
+    ).toBe(1_000);
+  });
+
+  test("tracks the pause since the last finished action, tool phases included", () => {
+    const tracker = createTrackerState();
+    const step = (sessionID: string, id: string, at: number) =>
+      handleStepStarted(tracker, sessionID, id, at);
+    const end = (
+      sessionID: string,
+      id: string,
+      at: number,
+      output: number,
+      reasoning: number,
+      finish = "stop",
+    ) => {
+      // Seed first-response timing the way streaming deltas would.
+      tracker.timingByMessage[id] = {
+        sessionID,
+        requestStartAt: at - 1_000,
+        firstResponseAt: at - 500,
+      };
+      return handleStepEnded(tracker, sessionID, id, finish, { output, reasoning }, at);
+    };
+
+    step("s1", "m1", 1_000);
+    const r1 = end("s1", "m1", 5_000, 100, 20);
+    expect(r1?.gapMs).toBeNull();
+
+    step("s1", "m2", 20_000);
+    const r2 = end("s1", "m2", 26_000, 80, 10);
+    expect(r2?.gapMs).toBe(15_000);
+
+    step("s1", "m3", 27_000);
+    handleToolCalled(tracker, "s1", "m3", 29_000);
+    const r3 = end("s1", "m3", 30_000, 40, 5, "tool-calls");
+    expect(r3?.gapMs).toBe(1_000);
+
+    step("s1", "m4", 35_000);
+    const r4 = end("s1", "m4", 40_000, 60, 0);
+    // The tool-calls completion reset the baseline, so this is the pause
+    // since the tool phase finished, not since the last final completion.
+    expect(r4?.gapMs).toBe(5_000);
+
+    step("s2", "m5", 100_000);
+    const r5 = end("s2", "m5", 105_000, 50, 0);
+    expect(r5?.gapMs).toBeNull();
+
+    // Each step start re-measures against the last finished action, so the
+    // second step of one message reports the pause since its tool phase.
+    step("s2", "m6", 110_000);
+    handleToolCalled(tracker, "s2", "m6", 112_000);
+    end("s2", "m6", 113_000, 10, 0, "tool-calls");
+    step("s2", "m6", 115_000);
+    tracker.timingByMessage["m6"] = {
+      sessionID: "s2",
+      requestStartAt: 114_000,
+      firstResponseAt: 114_500,
+    };
+    const r6 = end("s2", "m6", 118_000, 20, 0);
+    expect(r6?.gapMs).toBe(2_000);
+
+    expect(r1?.v).toBe(1);
+    expect(r1?.tokensTotal).toBe(120);
+    expect(typeof r1?.avgTps).toBe("number");
+    expect(sessionAverageRate(tracker, "s1")).toBeDefined();
+    expect(sessionTtft(tracker, "s1")).toBeDefined();
+    expect(lastGap(tracker, "s1")).toBe("5.0s");
+    expect(statusTextFor(tracker, "s1", true)).toContain("GAP 5.0s");
+  });
+
+  test("drops live samples on tool calls and session interrupts", () => {
+    const tracker = createTrackerState();
+    handleStepStarted(tracker, "s1", "m1", 1_000);
+    handleTextDelta(tracker, "s1", "m1", "hello world", 1_200);
+    expect(liveTps(tracker, "s1", false, 1_300)).toBeDefined();
+    expect(liveTps(tracker, "s1", true, 1_300)).toBeUndefined();
+
+    handleToolCalled(tracker, "s1", "m1", 1_400);
+    expect(tracker.streamSamplesBySession["s1"]).toBeUndefined();
+    expect(tracker.liveSamplesDroppedBySession["s1"]).toBe(true);
+
+    handleStepStarted(tracker, "s1", "m2", 2_000);
+    dropSession(tracker, "s1");
+    expect(tracker.timingByMessage["m2"]).toBeUndefined();
+
+    handleStepFailed(createTrackerState(), "missing");
+    expect(pruneSamples(createTrackerState(), 5_000)).toBe(false);
+  });
+
+  test("plugin registers the footer slot and cleans it up", async () => {
+    const client = clientFor({}, {});
+    const handlers = new Map<string, (event: { data: never }) => void>();
+    const slots: Array<{ append?: string }> = [];
+    let footerRender: ((input: { sessionID?: string }) => unknown) | undefined;
+    let footerRemoved = false;
+    let sidebarRemoved = false;
+    const color = RGBA.fromHex("#c6d0f5");
+    const context = {
+      client,
+      location: { directory: "/" },
+      data: {
+        on(type: string, handler: (event: { data: never }) => void) {
+          handlers.set(type, handler);
+          return () => { handlers.delete(type); };
+        },
+      },
+      ui: {
+        slot(value: { append?: string; render: (input: { sessionID?: string }) => unknown }) {
+          slots.push(value);
+          if (value.append === "prompt.footer.status") {
+            footerRender = value.render;
+            return () => { footerRemoved = true; };
+          }
+          return () => { sidebarRemoved = true; };
+        },
+        router: {
+          register: () => () => undefined,
+          navigate: () => undefined,
+          current: () => ({ type: "session", sessionID: "root" }),
+        },
+      },
+      keymap: { layer: () => undefined, mode: { current: () => "base", push: () => () => undefined } },
+      theme: {
+        text: {
+          base: color,
+          muted: color,
+          feedback: { info: { base: color }, warning: { base: color }, error: { base: color } },
+        },
+        border: { base: color },
+      },
+    } as unknown as Context;
+
+    const cleanup = plugin.setup(context) as () => void;
+    try {
+      expect(slots.map((slot) => slot.append).sort()).toEqual(
+        ["prompt.footer.status", "sidebar.content"].sort(),
+      );
+      for (const type of [
+        "session.text.delta",
+        "session.reasoning.delta",
+        "session.step.started",
+        "session.step.ended",
+        "session.step.failed",
+        "session.tool.called",
+        "session.execution.interrupted",
+        "session.execution.failed",
+      ]) {
+        expect(handlers.has(type)).toBe(true);
+      }
+      const view = await testRender(() => footerRender!({ sessionID: "root" }) as never, {
+        width: 60,
+        height: 4,
+      });
+      try {
+        await view.waitForFrame((frame) => frame.includes("TPS"));
+        expect(view.captureCharFrame()).toContain("TPS - | AVG - | TTFT - | GAP -");
+      } finally {
+        await view.dispose();
+      }
+    } finally {
+      cleanup();
+    }
+    expect(footerRemoved).toBe(true);
+    expect(sidebarRemoved).toBe(true);
+    expect(handlers.size).toBe(0);
+  });
+});
+
+describe("footer throughput end to end", () => {
+  test("GAP populates once a second message starts", async () => {
+    const client = clientFor({}, {});
+    const handlers = new Map<string, (event: never) => void>();
+    let footerRender: ((input: { sessionID?: string }) => unknown) | undefined;
+    const color = RGBA.fromHex("#c6d0f5");
+    const context = {
+      client,
+      location: { directory: "/" },
+      data: {
+        on(type: string, handler: (event: never) => void) {
+          handlers.set(type, handler);
+          return () => { handlers.delete(type); };
+        },
+        session: { status: () => "idle" as const },
+      },
+      ui: {
+        slot(value: { append?: string; render: (input: { sessionID?: string }) => unknown }) {
+          if (value.append === "prompt.footer.status") footerRender = value.render;
+          return () => undefined;
+        },
+        router: {
+          register: () => () => undefined,
+          navigate: () => undefined,
+          current: () => ({ type: "session", sessionID: "s1" }),
+        },
+      },
+      keymap: { layer: () => undefined, mode: { current: () => "base", push: () => () => undefined } },
+      theme: {
+        text: {
+          base: color,
+          muted: color,
+          feedback: { info: { base: color }, warning: { base: color }, error: { base: color } },
+        },
+        border: { base: color },
+      },
+    } as unknown as Context;
+
+    const cleanup = plugin.setup(context) as () => void;
+    try {
+      const view = await testRender(() => footerRender!({ sessionID: "s1" }) as never, {
+        width: 60,
+        height: 4,
+      });
+      try {
+        await view.waitForFrame((frame) => frame.includes("TPS"));
+        expect(view.captureCharFrame()).toContain("GAP -");
+
+        const t0 = Date.now() - 20_000;
+        const fire = (type: string, created: number, data: Record<string, unknown>) =>
+          handlers.get(type)!({ created, data } as never);
+        fire("session.step.started", t0, { sessionID: "s1", assistantMessageID: "m1" });
+        fire("session.text.delta", t0 + 400, { sessionID: "s1", assistantMessageID: "m1", delta: "hello world" });
+        fire("session.step.ended", t0 + 5000, {
+          sessionID: "s1",
+          assistantMessageID: "m1",
+          finish: "stop",
+          tokens: { input: 0, output: 100, reasoning: 20, cache: { read: 0, write: 0 } },
+        });
+        fire("session.step.started", t0 + 20000, { sessionID: "s1", assistantMessageID: "m2" });
+        await view.flush();
+        // The single stream sample is 20s old, so live TPS is stale by design;
+        // AVG/TTFT/GAP derive purely from the event stamps and must be exact.
+        expect(view.captureCharFrame()).toContain("TPS - | AVG 26.1 | TTFT 0.4s | GAP 15s");
+      } finally {
+        await view.dispose();
+      }
+    } finally {
+      cleanup();
+    }
+    expect(handlers.size).toBe(0);
+  });
 });

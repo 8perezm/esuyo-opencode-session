@@ -4,7 +4,10 @@ OpenCode 2 TUI sidebar plugin (`@esuyo/esuyo-opencode-session`). Shows token/cos
 
 ## Layout
 
-- `tui.tsx` — plugin entrypoint (`Plugin.define`, sidebar slot + `session-usage-details` route page). Thin UI only; reads a shared `state()` signal.
+- `tui.tsx` — plugin entrypoint (`Plugin.define`, sidebar slot, prompt-footer throughput slot, `session-usage-details` route registration, keymap). Owns the `UsageState` signal and all event/refresh wiring; imports presentation from `details-page.tsx`.
+- `details-page.tsx` — presentational only: `DetailsPage`, shared `UsageRow`, page layout constants. Renders existing `state()` — never calls `refresh()` or adds client calls.
+- `format.ts` — pure display formatting (`fmt`, `fmtCost`, `fmtDuration`, `fmtRate`, `clip`, `errorMessage`). No imports.
+- `tps.ts` — throughput tracker (TPS/AVG/TTFT/GAP) plus JSONL logging. Event-driven only, no client requests.
 - `usage.ts` — all pure logic: `computeTotals`, `sumSessions`, `estimateCost` / `combineCosts` / `estimateCacheSavings`, `computeDetails`, `fetchDescendants`, `fetchAssistantMessages`. Unit-test here first.
 - `test/tui.test.ts` — only test file; covers `usage.ts` functions plus offscreen TUI render via `testRender` from `@opentui/solid`.
 - `docs/` — design rationale (`session-summary-candidates.md`, `session-details-page.md`). Read before changing metrics/rows.
@@ -20,11 +23,11 @@ npm run pack:check  # verify published file list
 
 - Tests require **bun** (`bun:test`, `Bun.sleep`). Single test: `bun test --preload @opentui/solid/preload test/tui.test.ts -t "<name>"`.
 - CI (`.github/workflows/publish.yml`, Node 22 + Bun 1.4.3): `npm ci` then `npm test`.
-- No build step; npm publishes source files only (`files`: `tui.tsx`, `usage.ts`, `README.md`, `LICENSE`).
+- No build step; npm publishes source files only (`files`: `tui.tsx`, `details-page.tsx`, `format.ts`, `tps.ts`, `usage.ts`, `README.md`, `LICENSE`). Keep `files` and `tsconfig.json` `include` in sync when adding a source module.
 
 ## Conventions / gotchas
 
-- `tsconfig.json`: `jsx: react-jsx` with `jsxImportSource: @opentui/solid`; `tui.tsx` needs `/** @jsxImportSource @opentui/solid */`. `include` covers only `tui.tsx`, `usage.ts`, `test/**` — keep it that way.
+- `tsconfig.json`: `jsx: react-jsx` with `jsxImportSource: @opentui/solid`; every `.tsx` file needs `/** @jsxImportSource @opentui/solid */`. `include` covers source modules plus `test/**` — keep it minimal and in sync with `files`.
 - Install entry is the plugin **directory** in `cli.json` `plugins`, not `tui.tsx` and not `opencode.json`. Direct-file TUI entries are skipped by OpenCode 2.
 - Zero-extra-request rule: sidebar `refresh()` fetches everything; `DetailsPage` and the expandable `Session Summary` block must only render existing `state()` — never call `refresh()` or add client calls. Regression-guarded by request counters in tests.
 - Cost model: `message.cost === 0` with tokens = unreported (estimate from catalog); missing/undefined `cost` = skip, do not estimate. Model rows show `$` only for reported cost. Cache-hit rate = `cacheRead / (input + cacheRead + cacheWrite)`; null/omitted when denominator is 0.

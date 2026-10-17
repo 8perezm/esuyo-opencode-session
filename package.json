@@ -1,7 +1,7 @@
 {
   "name": "@esuyo/esuyo-opencode-session",
   "version": "2.0.3",
-  "description": "OpenCode TUI sidebar showing token usage across a session and its subagents.",
+  "description": "OpenCode TUI sidebar showing token usage across a session and its subagents, plus live TPS/AVG/TTFT/GAP throughput in the prompt footer with optional JSONL stats logging.",
   "license": "MIT",
   "author": "Nick Braun",
   "repository": {
@@ -21,7 +21,9 @@
     "tui",
     "tokens",
     "usage",
-    "subagents"
+    "subagents",
+    "tps",
+    "throughput"
   ],
   "type": "module",
   "exports": {
@@ -35,6 +37,9 @@
   "files": [
     "tui.tsx",
     "usage.ts",
+    "tps.ts",
+    "format.ts",
+    "details-page.tsx",
     "README.md",
     "LICENSE"
   ],

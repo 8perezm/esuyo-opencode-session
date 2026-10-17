@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["@opentui/solid/jsx-runtime", "bun"]
   },
-  "include": ["./tui.tsx", "./usage.ts", "./test/**/*.ts"]
+  "include": ["./tui.tsx", "./usage.ts", "./tps.ts", "./format.ts", "./details-page.tsx", "./test/**/*.ts"]
 }
