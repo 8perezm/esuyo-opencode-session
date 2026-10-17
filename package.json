@@ -1,6 +1,6 @@
 {
   "name": "@esuyo/esuyo-opencode-session",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "description": "OpenCode TUI sidebar showing token usage across a session and its subagents, plus live TPS/AVG/TTFT/GAP throughput in the prompt footer with optional JSONL stats logging.",
   "license": "MIT",
   "author": "Nick Braun",
