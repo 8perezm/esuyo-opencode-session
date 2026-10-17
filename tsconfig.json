@@ -4,10 +4,15 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/solid",
     "skipLibCheck": true,
-    "types": ["@opentui/solid/jsx-runtime", "bun"]
+    "types": ["bun"],
+    "paths": {
+      "opentui:runtime-module:solid-js": ["./test/runtime-alias/solid-js.ts"],
+      "opentui:runtime-module:%40opentui%2Fsolid": ["./test/runtime-alias/solid.ts"],
+      "opentui:runtime-module:%40opentui%2Fsolid%2Fjsx-runtime": ["./test/runtime-alias/jsx-runtime.ts"],
+      "opentui:runtime-module:%40opencode%2Fplugin%2Ftui": ["./test/runtime-alias/plugin-tui.ts"],
+      "opentui:runtime-module:%40opentui%2Fcore": ["./test/runtime-alias/core.ts"]
+    }
   },
-  "include": ["./tui.tsx", "./usage.ts", "./tps.ts", "./format.ts", "./details-page.tsx", "./test/**/*.ts"]
+  "include": ["./tui.ts", "./usage.ts", "./tps.ts", "./format.ts", "./details-page.ts", "./jsx.ts", "./test/**/*.ts"]
 }

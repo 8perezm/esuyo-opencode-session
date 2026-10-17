@@ -28,18 +28,19 @@
   "type": "module",
   "exports": {
     "./tui": {
-      "default": "./tui.tsx"
+      "default": "./tui.ts"
     }
   },
   "oc-plugin": [
     "tui"
   ],
   "files": [
-    "tui.tsx",
+    "tui.ts",
     "usage.ts",
     "tps.ts",
     "format.ts",
-    "details-page.tsx",
+    "details-page.ts",
+    "jsx.ts",
     "README.md",
     "LICENSE"
   ],
@@ -56,9 +57,18 @@
   "peerDependencies": {
     "@opencode/plugin": "^2.0.28",
     "@opencode/client": "^2.0.28",
-    "@opentui/core": "^0.6.4",
-    "@opentui/solid": "^0.6.4",
     "solid-js": "^1.9.12"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    },
+    "@opencode/client": {
+      "optional": true
+    },
+    "solid-js": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@opencode/plugin": "2.0.28",

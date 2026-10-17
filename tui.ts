@@ -1,10 +1,9 @@
-/** @jsxImportSource @opentui/solid */
-
-import { Plugin } from "@opencode/plugin/tui";
+import { Plugin } from "opentui:runtime-module:%40opencode%2Fplugin%2Ftui";
 import type { Destination } from "@opencode/plugin/tui/context";
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes } from "opentui:runtime-module:%40opentui%2Fcore";
 import type { ModelInfo } from "@opencode/client";
-import { Show, createEffect, createSignal } from "solid-js";
+import { Show, createEffect, createSignal } from "opentui:runtime-module:solid-js";
+import { h } from "./jsx";
 import {
   combineCosts,
   computeDetails,
@@ -327,112 +326,293 @@ export default Plugin.define({
           );
         };
 
-        return (
-          <Show when={state().status === "loading" || (state().status === "ready" && (state().turns > 0 || totalTokens() > 0 || state().cost > 0))}>
-            <box gap={0}>
-              <box flexDirection="row" justifyContent="space-between">
-                <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>Session Token Summary</text>
-                <text fg={context.theme.text.muted}>{"↻ " + state().turns + " turn" + (state().turns === 1 ? "" : "s")}</text>
-              </box>
-              <Show when={state().status === "loading"}>
-                <text fg={context.theme.text.muted}>Loading…</text>
-              </Show>
-              <Show when={state().status === "ready"}>
-                <box gap={0}>
-                  <UsageRow label="↑ in" value={fmt(state().input)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                  <UsageRow label="↓ out" value={fmt(state().output)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                  <UsageRow label="▤ cache write" value={fmt(state().cacheWrite)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                  <UsageRow label="▤ cache read" value={fmt(state().cacheRead)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                  <UsageRow label="ø cache hit rate" value={cacheHitRate()} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                  <Show when={state().reasoning > 0}>
-                    <UsageRow label="✦ think" value={fmt(state().reasoning)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                  </Show>
-                  <box height={1} border={["top"]} borderColor={context.theme.border.base} />
-                  <box flexDirection="row" justifyContent="space-between">
-                    <text fg={context.theme.text.muted}>Σ total</text>
-                    <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>{fmt(totalTokens())}</text>
-                  </box>
-                  <Show when={state().cost > 0}>
-                    <box flexDirection="row" justifyContent="space-between">
-                      <text fg={context.theme.text.muted}>
-                        {state().costMode === "estimated"
-                          ? "$ est. cost"
-                          : state().costMode === "mixed"
-                            ? "$ cost incl. est."
-                            : "$ cost"}
-                      </text>
-                      <text fg={costColor()}>{fmtCost(state().cost)}</text>
-                    </box>
-                  </Show>
-                  <Show when={hasDetails()}>
-                    <box height={1} />
-                    <box flexDirection="row" justifyContent="space-between" onMouseDown={toggleDetails}>
-                      <text fg={context.theme.text.base} attributes={TextAttributes.BOLD}>
-                        {(expanded() ? "▾ " : "▸ ") + "Session Summary"}
-                      </text>
-                    </box>
-                    <Show when={expanded()}>
-                      <box gap={0}>
-                        <Show when={d().toolCalls > 0}>
-                          <UsageRow
-                            label="▣ tools"
-                            value={d().toolCalls + (d().toolFailed > 0 ? " · " + d().toolFailed + " failed" : "")}
-                            labelColor={context.theme.text.muted}
-                            valueColor={d().toolFailed > 0 ? context.theme.text.feedback.warning.base : context.theme.text.base}
-                          />
-                        </Show>
-                        <Show when={d().files > 0}>
-                          <UsageRow label="≡ files" value={fmt(d().files)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                        </Show>
-                        <Show when={d().subagents > 0}>
-                          <UsageRow
-                            label="└ subagents"
-                            value={d().subagents + (d().subagentTokens > 0 ? " · " + fmt(d().subagentTokens) : "")}
-                            labelColor={context.theme.text.muted}
-                            valueColor={context.theme.text.base}
-                          />
-                        </Show>
-                        <Show when={d().models > 1}>
-                          <UsageRow
-                            label="◆ models"
-                            value={d().models + " · " + clip(d().topModel, MAX_MODEL_LABEL) + " " + d().topShare + "%"}
-                            labelColor={context.theme.text.muted}
-                            valueColor={context.theme.text.base}
-                          />
-                        </Show>
-                        <Show when={d().savings > 0}>
-                          <UsageRow label="≈ saved" value={fmtCost(d().savings)} labelColor={context.theme.text.muted} valueColor={context.theme.text.feedback.info.base} />
-                        </Show>
-                        <Show when={issues().length > 0}>
-                          <UsageRow
-                            label="× issues"
-                            value={issues()}
-                            labelColor={context.theme.text.muted}
-                            valueColor={d().errored > 0 ? context.theme.text.feedback.error.base : context.theme.text.feedback.warning.base}
-                          />
-                        </Show>
-                        <Show when={d().ageMs > 0}>
-                          <UsageRow label="↺ initiated" value={fmtDuration(d().ageMs)} labelColor={context.theme.text.muted} valueColor={context.theme.text.base} />
-                        </Show>
-                        <Show when={d().busyMs > 0}>
-                          <UsageRow
-                            label="→ busy"
-                            value={fmtDuration(d().busyMs) + (d().avgStepMs > 0 ? " · " + fmtDuration(d().avgStepMs) + "/step" : "")}
-                            labelColor={context.theme.text.muted}
-                            valueColor={context.theme.text.base}
-                          />
-                        </Show>
-                      </box>
-                    </Show>
-                    <box flexDirection="row" onMouseDown={() => openPage(props.sessionID)}>
-                      <text fg={context.theme.text.muted}>{OPEN_LINK_LABEL}</text>
-                    </box>
-                  </Show>
-                </box>
-              </Show>
-            </box>
-          </Show>
-        );
+        return h(Show, {
+          get when() {
+            return (
+              state().status === "loading" ||
+              (state().status === "ready" &&
+                (state().turns > 0 || totalTokens() > 0 || state().cost > 0))
+            );
+          },
+          children: h("box", {
+            gap: 0,
+            children: [
+              h("box", {
+                flexDirection: "row",
+                justifyContent: "space-between",
+                children: [
+                  h("text", {
+                    fg: context.theme.text.base,
+                    attributes: TextAttributes.BOLD,
+                    children: "Session Token Summary",
+                  }),
+                  h("text", {
+                    fg: context.theme.text.muted,
+                    children: () => "↻ " + state().turns + " turn" + (state().turns === 1 ? "" : "s"),
+                  }),
+                ],
+              }),
+              h(Show, {
+                get when() {
+                  return state().status === "loading";
+                },
+                children: h("text", { fg: context.theme.text.muted, children: "Loading…" }),
+              }),
+              h(Show, {
+                get when() {
+                  return state().status === "ready";
+                },
+                children: h("box", {
+                  gap: 0,
+                  children: [
+                    h(UsageRow, {
+                      label: "↑ in",
+                      get value() {
+                        return fmt(state().input);
+                      },
+                      labelColor: context.theme.text.muted,
+                      valueColor: context.theme.text.base,
+                    }),
+                    h(UsageRow, {
+                      label: "↓ out",
+                      get value() {
+                        return fmt(state().output);
+                      },
+                      labelColor: context.theme.text.muted,
+                      valueColor: context.theme.text.base,
+                    }),
+                    h(UsageRow, {
+                      label: "▤ cache write",
+                      get value() {
+                        return fmt(state().cacheWrite);
+                      },
+                      labelColor: context.theme.text.muted,
+                      valueColor: context.theme.text.base,
+                    }),
+                    h(UsageRow, {
+                      label: "▤ cache read",
+                      get value() {
+                        return fmt(state().cacheRead);
+                      },
+                      labelColor: context.theme.text.muted,
+                      valueColor: context.theme.text.base,
+                    }),
+                    h(UsageRow, {
+                      label: "ø cache hit rate",
+                      get value() {
+                        return cacheHitRate();
+                      },
+                      labelColor: context.theme.text.muted,
+                      valueColor: context.theme.text.base,
+                    }),
+                    h(Show, {
+                      get when() {
+                        return state().reasoning > 0;
+                      },
+                      children: h(UsageRow, {
+                        label: "✦ think",
+                        get value() {
+                          return fmt(state().reasoning);
+                        },
+                        labelColor: context.theme.text.muted,
+                        valueColor: context.theme.text.base,
+                      }),
+                    }),
+                    h("box", { height: 1, border: ["top"], borderColor: context.theme.border.base }),
+                    h("box", {
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      children: [
+                        h("text", { fg: context.theme.text.muted, children: "Σ total" }),
+                        h("text", {
+                          fg: context.theme.text.base,
+                          attributes: TextAttributes.BOLD,
+                          children: () => fmt(totalTokens()),
+                        }),
+                      ],
+                    }),
+                    h(Show, {
+                      get when() {
+                        return state().cost > 0;
+                      },
+                      children: h("box", {
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        children: [
+                          h("text", {
+                            fg: context.theme.text.muted,
+                            children: () =>
+                              state().costMode === "estimated"
+                                ? "$ est. cost"
+                                : state().costMode === "mixed"
+                                  ? "$ cost incl. est."
+                                  : "$ cost",
+                          }),
+                          h("text", {
+                            fg: () => costColor(),
+                            children: () => fmtCost(state().cost),
+                          }),
+                        ],
+                      }),
+                    }),
+                    h(Show, {
+                      get when() {
+                        return hasDetails();
+                      },
+                      children: [
+                        h("box", { height: 1 }),
+                        h("box", {
+                          flexDirection: "row",
+                          justifyContent: "space-between",
+                          onMouseDown: toggleDetails,
+                          children: h("text", {
+                            fg: context.theme.text.base,
+                            attributes: TextAttributes.BOLD,
+                            children: () => (expanded() ? "▾ " : "▸ ") + "Session Summary",
+                          }),
+                        }),
+                        h(Show, {
+                          get when() {
+                            return expanded();
+                          },
+                          children: h("box", {
+                            gap: 0,
+                            children: [
+                              h(Show, {
+                                get when() {
+                                  return d().toolCalls > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "▣ tools",
+                                  get value() {
+                                    return (
+                                      d().toolCalls + (d().toolFailed > 0 ? " · " + d().toolFailed + " failed" : "")
+                                    );
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  get valueColor() {
+                                    return d().toolFailed > 0
+                                      ? context.theme.text.feedback.warning.base
+                                      : context.theme.text.base;
+                                  },
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return d().files > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "≡ files",
+                                  get value() {
+                                    return fmt(d().files);
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  valueColor: context.theme.text.base,
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return d().subagents > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "└ subagents",
+                                  get value() {
+                                    return (
+                                      d().subagents + (d().subagentTokens > 0 ? " · " + fmt(d().subagentTokens) : "")
+                                    );
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  valueColor: context.theme.text.base,
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return d().models > 1;
+                                },
+                                children: h(UsageRow, {
+                                  label: "◆ models",
+                                  get value() {
+                                    return d().models + " · " + clip(d().topModel, MAX_MODEL_LABEL) + " " + d().topShare + "%";
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  valueColor: context.theme.text.base,
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return d().savings > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "≈ saved",
+                                  get value() {
+                                    return fmtCost(d().savings);
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  valueColor: context.theme.text.feedback.info.base,
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return issues().length > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "× issues",
+                                  get value() {
+                                    return issues();
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  get valueColor() {
+                                    return d().errored > 0
+                                      ? context.theme.text.feedback.error.base
+                                      : context.theme.text.feedback.warning.base;
+                                  },
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return d().ageMs > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "↺ initiated",
+                                  get value() {
+                                    return fmtDuration(d().ageMs);
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  valueColor: context.theme.text.base,
+                                }),
+                              }),
+                              h(Show, {
+                                get when() {
+                                  return d().busyMs > 0;
+                                },
+                                children: h(UsageRow, {
+                                  label: "→ busy",
+                                  get value() {
+                                    return (
+                                      fmtDuration(d().busyMs) +
+                                      (d().avgStepMs > 0 ? " · " + fmtDuration(d().avgStepMs) + "/step" : "")
+                                    );
+                                  },
+                                  labelColor: context.theme.text.muted,
+                                  valueColor: context.theme.text.base,
+                                }),
+                              }),
+                            ],
+                          }),
+                        }),
+                        h("box", {
+                          flexDirection: "row",
+                          onMouseDown: () => openPage(props.sessionID),
+                          children: h("text", { fg: context.theme.text.muted, children: OPEN_LINK_LABEL }),
+                        }),
+                      ],
+                    }),
+                  ],
+                }),
+              }),
+            ],
+          }),
+        });
       },
     });
 
@@ -442,7 +622,13 @@ export default Plugin.define({
         name: DETAILS_PAGE,
         render: (input) => {
           const sessionID = typeof input.data?.sessionID === "string" ? input.data.sessionID : lastSessionID;
-          return <DetailsPage context={context} state={state} sessionID={sessionID} onBack={closePage} onActive={setPageOpen} />;
+          return h(DetailsPage, {
+            context,
+            state,
+            sessionID,
+            onBack: closePage,
+            onActive: setPageOpen,
+          });
         },
       });
     } catch {
@@ -455,7 +641,10 @@ export default Plugin.define({
       render: (input) => {
         const sessionID = input.sessionID;
         if (!sessionID) return null;
-        return <text fg={context.theme.text.muted}>{tpsStatusText(sessionID)}</text>;
+        return h("text", {
+          fg: context.theme.text.muted,
+          children: () => tpsStatusText(sessionID),
+        });
       },
     });
 
@@ -484,8 +673,8 @@ export default Plugin.define({
     }));
 
     context.keymap.layer(() => ({
-      // Disabled unless the page is open, so the plugin never holds an escape binding the rest of the
-      // TUI is waiting for. Inline (no id) so the host registers `bind` straight onto the keymap.
+      // Disabled unless the page is open, so the plugin never holds an escape binding the rest of
+      // the TUI is waiting for. Inline (no id) so the host registers `bind` straight onto the keymap.
       enabled: () => pageOpen(),
       commands: [
         {
