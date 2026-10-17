@@ -10,6 +10,13 @@ One plugin, three live views for the [OpenCode](https://opencode.ai) terminal:
 - **Footer throughput** — how fast it is running: `TPS live | AVG | TTFT | GAP` in the
   prompt footer, with per-step JSONL logging.
 
+<table>
+  <tr>
+    <td><img src="docs/tui.png" alt="Sidebar usage panel and footer throughput" /></td>
+    <td><img src="docs/detail-page.png" alt="Session details page" /></td>
+  </tr>
+</table>
+
 ---
 
 The sidebar is a hard fork of
