@@ -89,7 +89,7 @@ function SplitRows(props: {
         get when() {
           return props.entries.length > SPLIT_LIMIT;
         },
-        children: h("text", {
+        children: (_show: unknown) => h("text", {
           fg: () => props.labelColor,
           children: () => "  +" + (props.entries.length - SPLIT_LIMIT) + " more",
         }),
@@ -194,7 +194,7 @@ export function DetailsPage(props: {
           get when() {
             return identity() !== "";
           },
-          children: h("text", {
+          children: (_show: unknown) => h("text", {
             fg: theme.text.muted,
             children: () => clip(identity(), PAGE_CONTENT_WIDTH),
           }),
@@ -204,13 +204,13 @@ export function DetailsPage(props: {
           get when() {
             return usage().status === "loading";
           },
-          children: h("text", { fg: theme.text.muted, children: "Loading…" }),
+          children: (_show: unknown) => h("text", { fg: theme.text.muted, children: "Loading…" }),
         }),
         h(Show, {
           get when() {
             return usage().status === "error";
           },
-          children: h("text", {
+          children: (_show: unknown) => h("text", {
             fg: theme.text.feedback.error.base,
             children: () => usage().error || "Unknown error",
           }),
@@ -219,7 +219,7 @@ export function DetailsPage(props: {
           get when() {
             return usage().status === "ready";
           },
-          children: h("box", {
+          children: (_show: unknown) => h("box", {
             gap: 0,
             children: [
               h(SectionHeader, { title: "Tokens", fg: theme.text.base }),
@@ -243,7 +243,7 @@ export function DetailsPage(props: {
                 get when() {
                   return usage().reasoning > 0;
                 },
-                children: h(PageRow, {
+                children: (_show: unknown) => h(PageRow, {
                   label: "✦ think",
                   get value() {
                     return fmt(usage().reasoning);
@@ -288,14 +288,14 @@ export function DetailsPage(props: {
                 get when() {
                   return usage().cost > 0 || d().savings > 0;
                 },
-                children: [
+                children: (_show: unknown) => [
                   h("box", { height: 1 }),
                   h(SectionHeader, { title: "Cost", fg: theme.text.base }),
                   h(Show, {
                     get when() {
                       return usage().cost > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       get label() {
                         return costLabel();
                       },
@@ -310,7 +310,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().savings > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "≈ saved",
                       get value() {
                         return fmtCost(d().savings);
@@ -332,14 +332,14 @@ export function DetailsPage(props: {
                     d().retried > 0
                   );
                 },
-                children: [
+                children: (_show: unknown) => [
                   h("box", { height: 1 }),
                   h(SectionHeader, { title: "Activity", fg: theme.text.base }),
                   h(Show, {
                     get when() {
                       return d().toolCalls > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "▣ tools",
                       get value() {
                         return (
@@ -358,7 +358,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().toolSplit.length > 0;
                     },
-                    children: h(SplitRows, {
+                    children: (_show: unknown) => h(SplitRows, {
                       get entries() {
                         return d().toolSplit.map((tool) => ({
                           label: tool.name,
@@ -376,7 +376,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().files > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "≡ files",
                       get value() {
                         return fmt(d().files);
@@ -389,7 +389,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().subagents > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "└ subagents",
                       get value() {
                         return family();
@@ -402,7 +402,7 @@ export function DetailsPage(props: {
                     get when() {
                       return issues() !== "";
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "× issues",
                       get value() {
                         return issues();
@@ -419,7 +419,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().lastError !== "";
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "× last error",
                       get value() {
                         return clip(d().lastError, PAGE_VALUE_WIDTH);
@@ -432,7 +432,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().retried > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "↻ retries",
                       get value() {
                         return clip(retries(), PAGE_VALUE_WIDTH);
@@ -447,7 +447,7 @@ export function DetailsPage(props: {
                 get when() {
                   return d().agentSplit.length > 0;
                 },
-                children: [
+                children: (_show: unknown) => [
                   h("box", { height: 1 }),
                   h(SectionHeader, { title: "Agents", fg: theme.text.base }),
                   h(SplitRows, {
@@ -472,7 +472,7 @@ export function DetailsPage(props: {
                 get when() {
                   return d().modelSplit.length > 0;
                 },
-                children: [
+                children: (_show: unknown) => [
                   h("box", { height: 1 }),
                   h(SectionHeader, { title: "Models", fg: theme.text.base }),
                   h(SplitRows, {
@@ -495,7 +495,7 @@ export function DetailsPage(props: {
                 get when() {
                   return d().subagentList.length > 0;
                 },
-                children: [
+                children: (_show: unknown) => [
                   h("box", { height: 1 }),
                   h(SectionHeader, { title: "Subagents", fg: theme.text.base }),
                   h(SplitRows, {
@@ -525,14 +525,14 @@ export function DetailsPage(props: {
                 get when() {
                   return d().ageMs > 0 || d().busyMs > 0 || d().slowestMs > 0;
                 },
-                children: [
+                children: (_show: unknown) => [
                   h("box", { height: 1 }),
                   h(SectionHeader, { title: "Timing", fg: theme.text.base }),
                   h(Show, {
                     get when() {
                       return d().ageMs > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "↺ initiated",
                       get value() {
                         return fmtDuration(d().ageMs);
@@ -545,7 +545,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().busyMs > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "→ busy",
                       get value() {
                         return (
@@ -561,7 +561,7 @@ export function DetailsPage(props: {
                     get when() {
                       return d().slowestMs > 0;
                     },
-                    children: h(PageRow, {
+                    children: (_show: unknown) => h(PageRow, {
                       label: "→ slowest",
                       get value() {
                         return (

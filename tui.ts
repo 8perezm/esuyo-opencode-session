@@ -334,7 +334,7 @@ export default Plugin.define({
                 (state().turns > 0 || totalTokens() > 0 || state().cost > 0))
             );
           },
-          children: h("box", {
+          children: (_show: unknown) => h("box", {
             gap: 0,
             children: [
               h("box", {
@@ -356,13 +356,13 @@ export default Plugin.define({
                 get when() {
                   return state().status === "loading";
                 },
-                children: h("text", { fg: context.theme.text.muted, children: "Loading…" }),
+                children: (_show: unknown) => h("text", { fg: context.theme.text.muted, children: "Loading…" }),
               }),
               h(Show, {
                 get when() {
                   return state().status === "ready";
                 },
-                children: h("box", {
+                children: (_show: unknown) => h("box", {
                   gap: 0,
                   children: [
                     h(UsageRow, {
@@ -409,7 +409,7 @@ export default Plugin.define({
                       get when() {
                         return state().reasoning > 0;
                       },
-                      children: h(UsageRow, {
+                      children: (_show: unknown) => h(UsageRow, {
                         label: "✦ think",
                         get value() {
                           return fmt(state().reasoning);
@@ -435,7 +435,7 @@ export default Plugin.define({
                       get when() {
                         return state().cost > 0;
                       },
-                      children: h("box", {
+                      children: (_show: unknown) => h("box", {
                         flexDirection: "row",
                         justifyContent: "space-between",
                         children: [
@@ -459,7 +459,7 @@ export default Plugin.define({
                       get when() {
                         return hasDetails();
                       },
-                      children: [
+                      children: (_show: unknown) => [
                         h("box", { height: 1 }),
                         h("box", {
                           flexDirection: "row",
@@ -475,14 +475,14 @@ export default Plugin.define({
                           get when() {
                             return expanded();
                           },
-                          children: h("box", {
+                          children: (_show: unknown) => h("box", {
                             gap: 0,
                             children: [
                               h(Show, {
                                 get when() {
                                   return d().toolCalls > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "▣ tools",
                                   get value() {
                                     return (
@@ -501,7 +501,7 @@ export default Plugin.define({
                                 get when() {
                                   return d().files > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "≡ files",
                                   get value() {
                                     return fmt(d().files);
@@ -514,7 +514,7 @@ export default Plugin.define({
                                 get when() {
                                   return d().subagents > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "└ subagents",
                                   get value() {
                                     return (
@@ -529,7 +529,7 @@ export default Plugin.define({
                                 get when() {
                                   return d().models > 1;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "◆ models",
                                   get value() {
                                     return d().models + " · " + clip(d().topModel, MAX_MODEL_LABEL) + " " + d().topShare + "%";
@@ -542,7 +542,7 @@ export default Plugin.define({
                                 get when() {
                                   return d().savings > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "≈ saved",
                                   get value() {
                                     return fmtCost(d().savings);
@@ -555,7 +555,7 @@ export default Plugin.define({
                                 get when() {
                                   return issues().length > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "× issues",
                                   get value() {
                                     return issues();
@@ -572,7 +572,7 @@ export default Plugin.define({
                                 get when() {
                                   return d().ageMs > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "↺ initiated",
                                   get value() {
                                     return fmtDuration(d().ageMs);
@@ -585,7 +585,7 @@ export default Plugin.define({
                                 get when() {
                                   return d().busyMs > 0;
                                 },
-                                children: h(UsageRow, {
+                                children: (_show: unknown) => h(UsageRow, {
                                   label: "→ busy",
                                   get value() {
                                     return (

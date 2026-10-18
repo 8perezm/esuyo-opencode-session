@@ -8,6 +8,11 @@
 // effect wrapping dynamic values, and children go through a single insert.
 // (Deviations were tried and reverted: per-child insertNode calls break
 // mounting in async flows, and a null insert marker changes nothing.)
+//
+// Show children must stay lazy factories (`children: (_show) => ...`, mirroring
+// the transform's `get children()`): the host destroys detached nodes, so every
+// show/hide cycle has to mount brand-new elements. Reusing one static instance
+// crashes the slot with "TextBuffer is destroyed".
 import {
   createComponent,
   createElement,

@@ -1421,3 +1421,95 @@ describe("footer throughput end to end", () => {
     expect(handlers.size).toBe(0);
   });
 });
+
+test("sidebar remounts fresh nodes instead of reusing destroyed ones", async () => {
+  // The host destroys detached nodes, so every Show toggle must mount brand-new
+  // elements. Reusing the previous instances crashes the slot in the host with
+  // "TextBuffer is destroyed" (in tests it only warns on re-add).
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map((arg) => String(arg)).join(" "));
+  };
+  try {
+    const rootTurn = assistant("root-turn");
+    rootTurn.content = [toolCall("t1", "bash", false)];
+    const client = clientFor({ root: [session("child")] }, {
+      root: [rootTurn],
+      child: [assistant("child-turn")],
+      other: [assistant("other-turn")],
+    });
+    const layers: Array<{ commands: Array<{ id: string; run?: () => void }> }> = [];
+    const color = RGBA.fromHex("#c6d0f5");
+    let claim: SlotClaim<"sidebar.content">;
+    let cleanup: (() => void) | undefined;
+    let select: (id: string) => void = () => undefined;
+    const context = {
+      client,
+      data: { on: () => () => undefined },
+      ui: {
+        slot(value: SlotClaim<"sidebar.content"> & { append?: string }) {
+          if ((value as { append?: string }).append === "prompt.footer.status") return () => undefined;
+          claim = value;
+          return () => undefined;
+        },
+        router: {
+          register: () => () => undefined,
+          navigate: () => undefined,
+          current: () => ({ type: "session", sessionID: "root" }),
+        },
+      },
+      keymap: {
+        layer(factory: () => (typeof layers)[number]) {
+          layers.push(factory());
+        },
+        mode: { current: () => "base", push: () => () => undefined },
+      },
+      theme: {
+        text: {
+          base: color,
+          muted: color,
+          feedback: { info: { base: color }, warning: { base: color }, error: { base: color } },
+        },
+        border: { base: color },
+      },
+    } as unknown as Context;
+    const view = await testRender(() => {
+      const [selected, setSelected] = createSignal("root");
+      select = setSelected;
+      cleanup = plugin.setup(context) as () => void;
+      return claim.render({ get sessionID() { return selected(); } });
+    }, { width: 60, height: 20 });
+    try {
+      await view.waitForFrame((frame) => frame.includes("2 turns"));
+      const toggle = layers[0]!.commands[0]!;
+      expect(toggle.id).toBe("session.usage.details");
+      // Expand and collapse so the details subtree mounts, unmounts, and remounts.
+      toggle.run!();
+      await view.waitForFrame((frame) => frame.includes("▣ tools"));
+      toggle.run!();
+      await view.waitForFrame((frame) => !frame.includes("▣ tools"));
+      toggle.run!();
+      await view.waitForFrame((frame) => frame.includes("▣ tools"));
+      // Switch sessions with time for detached nodes to be destroyed and the
+      // async refresh to land afterwards, the sequence that crashed the host.
+      select("other");
+      await view.waitForFrame((frame) => frame.includes("1 turn"));
+      await Bun.sleep(50);
+      await view.flush();
+      select("root");
+      await view.waitForFrame((frame) => frame.includes("2 turns"));
+      await Bun.sleep(50);
+      await view.flush();
+      expect(view.captureCharFrame()).toContain("Session Token Summary");
+      expect(
+        warnings.filter((warning) => /already destroyed|skipping (add|remove)|is destroyed/.test(warning)),
+      ).toEqual([]);
+    } finally {
+      cleanup?.();
+      await view.dispose();
+    }
+  } finally {
+    console.warn = originalWarn;
+  }
+});
