@@ -233,7 +233,7 @@ export default Plugin.define({
         sampleDelta(event.data.sessionID, event.data.assistantMessageID, event.data.delta, stamp(event)),
       ),
       context.data.on("session.step.started", (event) => {
-        handleStepStarted(tpsTracker, event.data.sessionID, event.data.assistantMessageID, stamp(event));
+        handleStepStarted(tpsTracker, event.data.sessionID, event.data.assistantMessageID, stamp(event), event.id);
         bumpTps();
       }),
       context.data.on("session.step.ended", (event) => {
@@ -244,6 +244,7 @@ export default Plugin.define({
           event.data.finish,
           event.data.tokens,
           stamp(event),
+          event.id,
         );
         if (record) void logLine(record);
         // handleStepEnded already prunes; bumping re-renders the footer.

@@ -10,6 +10,8 @@ export type StreamSample = {
 export const STREAM_WINDOW_MS = 5_000;
 export const LIVE_STALE_MS = 1_500;
 export const SINGLE_SAMPLE_MS = 1_000;
+/** Redelivered step events share one id; the window only needs to cover replay bursts. */
+export const MAX_SEEN_STEP_EVENTS = 500;
 
 /** Timing of one model step. Keyed by the assistant message that owns it. */
 export type StepTiming = {
@@ -35,6 +37,10 @@ export type TrackerState = {
   lastCompletedAtBySession: Record<string, number>;
   lastGapMsBySession: Record<string, number>;
   liveSamplesDroppedBySession: Record<string, boolean>;
+  /** Recently seen step event ids. Step events are durable (at-least-once), and the
+   *  log shows the same step.ended redelivered up to 12 times; without dedupe every
+   *  redelivery adds the step's tokens to the session average again. */
+  seenStepEventIDs: Set<string>;
 };
 
 export type TpsLogRecord = {
@@ -121,7 +127,20 @@ export function createTrackerState(): TrackerState {
     lastCompletedAtBySession: {},
     lastGapMsBySession: {},
     liveSamplesDroppedBySession: {},
+    seenStepEventIDs: new Set(),
   };
+}
+
+/** Step events are durable (at-least-once redelivery). Returns true the first time an
+ *  event id is seen and records it; replays of the same id must be skipped by the caller. */
+export function noteStepEventID(tracker: TrackerState, eventID: string): boolean {
+  if (tracker.seenStepEventIDs.has(eventID)) return false;
+  tracker.seenStepEventIDs.add(eventID);
+  if (tracker.seenStepEventIDs.size > MAX_SEEN_STEP_EVENTS) {
+    const oldest = tracker.seenStepEventIDs.values().next().value;
+    if (oldest !== undefined) tracker.seenStepEventIDs.delete(oldest);
+  }
+  return true;
 }
 
 /** Drop samples outside the streaming window. Returns true when anything changed. */
@@ -185,7 +204,11 @@ export function handleStepStarted(
   sessionID: string,
   assistantMessageID: string,
   now: number,
+  eventID?: string,
 ): void {
+  // Durable redeliveries share the event id: a replayed start must not wipe the
+  // first-response timing the live step already recorded.
+  if (eventID !== undefined && !noteStepEventID(tracker, eventID)) return;
   // The gap is measured at every step start against whatever finished last —
   // a model step or a tool phase — so pauses anywhere in the loop stay visible.
   // Only the first step of a message re-opens it (resets live-sample tracking).
@@ -208,7 +231,10 @@ export function handleStepEnded(
   finish: string,
   tokens: { output: number; reasoning: number },
   now: number,
+  eventID?: string,
 ): TpsLogRecord | undefined {
+  // A redelivered end must not count the step's tokens (or log the step) again.
+  if (eventID !== undefined && !noteStepEventID(tracker, eventID)) return undefined;
   const timing = tracker.timingByMessage[assistantMessageID];
   delete tracker.timingByMessage[assistantMessageID];
 

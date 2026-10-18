@@ -1260,6 +1260,25 @@ describe("throughput tracker", () => {
     expect(sessionAverageRate(tracker, "s1")).toBe("100");
   });
 
+  test("ignores redelivered step events instead of counting them again", () => {
+    const tracker = createTrackerState();
+    // The bus redelivers durable step events (the log shows the same step.ended
+    // up to 12 times); every replay must be a no-op.
+    handleStepStarted(tracker, "s1", "m1", 0, "evt-start");
+    handleTextDelta(tracker, "s1", "m1", "hello world", 500);
+    const first = handleStepEnded(tracker, "s1", "m1", "stop", { output: 80, reasoning: 20 }, 2_000, "evt-end");
+    expect(first?.tokensTotal).toBe(100);
+    handleStepStarted(tracker, "s1", "m1", 0, "evt-start");
+    const replay = handleStepEnded(tracker, "s1", "m1", "stop", { output: 80, reasoning: 20 }, 2_000, "evt-end");
+    expect(replay).toBeUndefined();
+    expect(sessionAverageRate(tracker, "s1")).toBe("50.0");
+    // A distinct step still counts.
+    handleStepStarted(tracker, "s1", "m2", 3_000, "evt-start-2");
+    handleTextDelta(tracker, "s1", "m2", "hello world", 3_500);
+    handleStepEnded(tracker, "s1", "m2", "stop", { output: 80, reasoning: 20 }, 5_000, "evt-end-2");
+    expect(sessionAverageRate(tracker, "s1")).toBe("50.0");
+  });
+
   test("drops live samples on tool calls and session interrupts", () => {
     const tracker = createTrackerState();
     handleStepStarted(tracker, "s1", "m1", 1_000);
