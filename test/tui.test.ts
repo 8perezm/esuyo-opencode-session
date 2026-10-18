@@ -1283,8 +1283,11 @@ describe("throughput tracker", () => {
     const tracker = createTrackerState();
     handleStepStarted(tracker, "s1", "m1", 1_000);
     handleTextDelta(tracker, "s1", "m1", "hello world", 1_200);
-    expect(liveTps(tracker, "s1", false, 1_300)).toBeDefined();
-    expect(liveTps(tracker, "s1", true, 1_300)).toBeUndefined();
+    const fresh = liveTps(tracker, "s1", false, 1_300);
+    expect(fresh).toBeDefined();
+    // Idle or stale reads keep the last observed rate instead of blanking to "-".
+    expect(liveTps(tracker, "s1", true, 1_300)).toBe(fresh);
+    expect(liveTps(tracker, "s1", false, 60_000)).toBe(fresh);
 
     handleToolCalled(tracker, "s1", "m1", 1_400);
     expect(tracker.streamSamplesBySession["s1"]).toBeUndefined();

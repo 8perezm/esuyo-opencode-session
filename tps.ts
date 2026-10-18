@@ -37,6 +37,8 @@ export type TrackerState = {
   lastCompletedAtBySession: Record<string, number>;
   lastGapMsBySession: Record<string, number>;
   liveSamplesDroppedBySession: Record<string, boolean>;
+  /** Last live rate observed per session, kept on screen once streaming goes stale. */
+  lastLiveTpsBySession: Record<string, number>;
   /** Recently seen step event ids. Step events are durable (at-least-once), and the
    *  log shows the same step.ended redelivered up to 12 times; without dedupe every
    *  redelivery adds the step's tokens to the session average again. */
@@ -127,6 +129,7 @@ export function createTrackerState(): TrackerState {
     lastCompletedAtBySession: {},
     lastGapMsBySession: {},
     liveSamplesDroppedBySession: {},
+    lastLiveTpsBySession: {},
     seenStepEventIDs: new Set(),
   };
 }
@@ -341,17 +344,25 @@ export function liveTps(
   isIdle: boolean,
   now: number = Date.now(),
 ): string | undefined {
-  if (isIdle) return undefined;
+  // Once a live rate has been observed it stays on screen; idle or stale reads
+  // fall back to it instead of blanking to "-".
+  const fallback = (): string | undefined => {
+    const last = tracker.lastLiveTpsBySession[sessionID];
+    return last === undefined ? undefined : formatRate(last);
+  };
+  if (isIdle) return fallback();
   const samples = tracker.streamSamplesBySession[sessionID] ?? [];
-  if (samples.length === 0) return undefined;
+  if (samples.length === 0) return fallback();
   const relevant = samples.filter((sample) => now - sample.at <= STREAM_WINDOW_MS);
-  if (relevant.length === 0) return undefined;
+  if (relevant.length === 0) return fallback();
   const lastSample = relevant[relevant.length - 1];
-  if (!lastSample || now - lastSample.at > LIVE_STALE_MS) return undefined;
+  if (!lastSample || now - lastSample.at > LIVE_STALE_MS) return fallback();
   const total = relevant.reduce((sum, sample) => sum + sample.tokens, 0);
   const durationSeconds = activeDurationMs(relevant, now) / 1000;
-  if (durationSeconds <= 0) return undefined;
-  return formatRate(total / durationSeconds);
+  if (durationSeconds <= 0) return fallback();
+  const rate = total / durationSeconds;
+  tracker.lastLiveTpsBySession[sessionID] = rate;
+  return formatRate(rate);
 }
 
 export function lastGap(tracker: TrackerState, sessionID: string): string | undefined {
