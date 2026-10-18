@@ -159,7 +159,7 @@ TPS 62.4 | AVG 58.1 | TTFT 0.9s | GAP 12.3s
 | Metric | Meaning |
 | --- | --- |
 | `TPS` | Live tokens/sec over the last 5s streaming window. `-` while idle. |
-| `AVG` | Session-average tokens/sec across completed model steps. |
+| `AVG` | Session-average tokens/sec across completed model steps, on wall-clock step time. Thinking, queueing and tool phases count, so it reads lower than live TPS on reasoning-heavy sessions. |
 | `TTFT` | Session-average time from request start to first token. |
 | `GAP` | Time since the previous step finished — model step or tool phase — when this step started, including user think-time. `-` until the second step starts. |
 

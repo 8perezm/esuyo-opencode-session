@@ -1250,6 +1250,16 @@ describe("throughput tracker", () => {
     expect(statusTextFor(tracker, "s1", true)).toContain("GAP 5.0s");
   });
 
+  test("averages over wall-clock step time, not visible streaming time", () => {
+    const tracker = createTrackerState();
+    // 9s of thinking/queueing with no deltas, then 1000 tokens stream in 1s.
+    // Dividing by streaming time alone would report 1000 tok/s.
+    handleStepStarted(tracker, "s1", "m1", 0);
+    handleTextDelta(tracker, "s1", "m1", "hello world", 9_000);
+    handleStepEnded(tracker, "s1", "m1", "stop", { output: 800, reasoning: 200 }, 10_000);
+    expect(sessionAverageRate(tracker, "s1")).toBe("100");
+  });
+
   test("drops live samples on tool calls and session interrupts", () => {
     const tracker = createTrackerState();
     handleStepStarted(tracker, "s1", "m1", 1_000);
@@ -1411,7 +1421,9 @@ describe("footer throughput end to end", () => {
         await view.flush();
         // The single stream sample is 20s old, so live TPS is stale by design;
         // AVG/TTFT/GAP derive purely from the event stamps and must be exact.
-        expect(view.captureCharFrame()).toContain("TPS - | AVG 26.1 | TTFT 0.4s | GAP 15s");
+        // AVG runs on wall-clock step time (request start to finish): 120 tokens
+        // over 5s, not over the 4.6s of visible streaming.
+        expect(view.captureCharFrame()).toContain("TPS - | AVG 24.0 | TTFT 0.4s | GAP 15s");
       } finally {
         await view.dispose();
       }

@@ -220,6 +220,11 @@ export function handleStepEnded(
     const endAt = finish === "tool-calls" ? (timing.lastToolCallAt ?? now) : now;
     const durationMs = Math.max(endAt - timing.firstResponseAt, 1);
     const ttftMs = Math.max(timing.firstResponseAt - timing.requestStartAt, 0);
+    // The session average runs on wall-clock time per step (request start to finish),
+    // not on visible streaming time: thinking, queueing and tool phases produce no
+    // deltas, so dividing their tokens by streaming time alone inflates the average
+    // into the hundreds on reasoning-heavy sessions.
+    const wallDurationMs = Math.max(endAt - timing.requestStartAt, 1);
     const totals = tracker.sessionAverageByID[sessionID] ?? {
       totalTokens: 0,
       totalDurationMs: 0,
@@ -228,7 +233,7 @@ export function handleStepEnded(
     };
     tracker.sessionAverageByID[sessionID] = {
       totalTokens: totals.totalTokens + totalTokens,
-      totalDurationMs: totals.totalDurationMs + durationMs,
+      totalDurationMs: totals.totalDurationMs + wallDurationMs,
       totalTtftMs: totals.totalTtftMs + ttftMs,
       stepCount: totals.stepCount + 1,
     };
